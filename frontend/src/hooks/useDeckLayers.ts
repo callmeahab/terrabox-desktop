@@ -219,9 +219,11 @@ export const useDeckLayers = ({
             return [255, 255, 255, 255] as [number, number, number, number]; // White borders for editing
           },
 
-          getLineWidth: (feature: any, { object, index }: any) => {
-            // Check if this feature is selected
-            const isSelected = selectedEditFeatureIndexes.includes(index);
+          getLineWidth: (feature: any) => {
+            // For EditableGeoJsonLayer, we need to find the feature index manually
+            // since the second parameter signature isn't compatible
+            const featureIndex = geoJsonData.features?.findIndex((f: any) => f === feature) ?? -1;
+            const isSelected = selectedEditFeatureIndexes.includes(featureIndex);
 
             if (isSelected) {
               return 4; // Thicker line for selected features
@@ -236,16 +238,6 @@ export const useDeckLayers = ({
             return 2; // Border width for polygons
           },
 
-          getPointRadius: (feature: any, { object, index }: any) => {
-            // Check if this feature is selected
-            const isSelected = selectedEditFeatureIndexes.includes(index);
-
-            if (isSelected) {
-              return 12; // Larger radius for selected points
-            }
-
-            return 8; // Default point size
-          },
 
           filled: true,
           stroked: true,
@@ -257,7 +249,6 @@ export const useDeckLayers = ({
             getFillColor: [selectedEditFeatureIndexes],
             getLineColor: [selectedEditFeatureIndexes],
             getLineWidth: [selectedEditFeatureIndexes],
-            getPointRadius: [selectedEditFeatureIndexes],
           },
         });
 

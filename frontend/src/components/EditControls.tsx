@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   Box,
   SpeedDial,
@@ -32,6 +32,8 @@ import {
   Download,
   FileDownload,
 } from "@mui/icons-material";
+import GeoJSONExportModal from "./GeoJSONExportModal";
+import { WriteFile, SelectDirectory } from "../../wailsjs/go/main/App";
 
 interface EditControlsProps {
   editMode: string;
@@ -54,6 +56,10 @@ const EditControls: React.FC<EditControlsProps> = ({
   onSave,
   onCancel,
 }) => {
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportData, setExportData] = useState<any>(null);
+  const [exportFilename, setExportFilename] = useState("");
+
   const editableLayers = layers.filter(
     (l) => l.data && l.data.type === "FeatureCollection"
   );
@@ -94,18 +100,28 @@ const EditControls: React.FC<EditControlsProps> = ({
     setEditableLayerId(null);
   };
 
-  const downloadGeoJSON = (data: any, filename: string) => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
+  const openExportModal = (data: any, filename: string) => {
+    setExportData(data);
+    setExportFilename(filename);
+    setExportModalOpen(true);
+  };
+
+  const handleSaveToFile = async (filename: string, content: string) => {
+    try {
+      // Let the user select a directory
+      const directory = await SelectDirectory();
+      if (!directory) return;
+
+      // Construct the full file path
+      const filePath = `${directory}/${filename}`;
+
+      // Save the file using Wails
+      await WriteFile(filePath, content);
+      console.log("File saved successfully:", filePath);
+    } catch (error) {
+      console.error("Error saving file:", error);
+      throw error;
+    }
   };
 
   const handleExportLayer = () => {
@@ -113,8 +129,8 @@ const EditControls: React.FC<EditControlsProps> = ({
 
     const layer = layers.find((l) => l.id === editableLayerId);
     if (layer && layer.data) {
-      const filename = `${layer.file_name || editableLayerId}_export.geojson`;
-      downloadGeoJSON(layer.data, filename);
+      const filename = `${layer.file_name || editableLayerId}_export`;
+      openExportModal(layer.data, filename);
     }
   };
 
@@ -134,8 +150,8 @@ const EditControls: React.FC<EditControlsProps> = ({
         };
         const filename = `${
           layer.file_name || editableLayerId
-        }_selected_export.geojson`;
-        downloadGeoJSON(exportData, filename);
+        }_selected_export`;
+        openExportModal(exportData, filename);
       }
     }
   };
@@ -420,6 +436,14 @@ const EditControls: React.FC<EditControlsProps> = ({
           </ButtonGroup>
         </Paper>
       )}
+
+      <GeoJSONExportModal
+        open={exportModalOpen}
+        onClose={() => setExportModalOpen(false)}
+        data={exportData}
+        filename={exportFilename}
+        onSave={handleSaveToFile}
+      />
     </>
   );
 };

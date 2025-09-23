@@ -420,7 +420,7 @@ const OverpassEditor: React.FC<OverpassEditorProps> = ({ open, onClose }) => {
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
             <Code color="primary" />
-            <Typography variant="h6" sx={{ fontWeight: 600 }}>
+            <Typography component="span" variant="h6" sx={{ fontWeight: 600 }}>
               Overpass Turbo Query Editor
             </Typography>
             <Chip

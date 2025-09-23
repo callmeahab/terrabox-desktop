@@ -13,6 +13,7 @@ import {
 } from '@mui/material';
 import { Search, LocationOn } from '@mui/icons-material';
 import { useSearch } from '../hooks/useMapLayers';
+import OverpassEditor from './OverpassEditor';
 
 interface SearchResult {
   place_name: string;
@@ -26,6 +27,7 @@ const LocationSearch: React.FC = () => {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [showResults, setShowResults] = useState(false);
+  const [showQueryEditor, setShowQueryEditor] = useState(false);
 
   const { setSearchData } = useSearch();
 
@@ -103,6 +105,11 @@ const LocationSearch: React.FC = () => {
     });
   };
 
+  const handleInputClick = () => {
+    // Open the Overpass query editor when clicking on the search field
+    setShowQueryEditor(true);
+  };
+
   const handleInputFocus = () => {
     if (results.length > 0) {
       setShowResults(true);
@@ -114,8 +121,10 @@ const LocationSearch: React.FC = () => {
     setTimeout(() => setShowResults(false), 200);
   };
 
+
   return (
-    <Box
+    <>
+      <Box
       sx={{
         position: 'absolute',
         top: 16,
@@ -131,6 +140,7 @@ const LocationSearch: React.FC = () => {
         placeholder="Search for places..."
         value={query}
         onChange={handleInputChange}
+        onClick={handleInputClick}
         onFocus={handleInputFocus}
         onBlur={handleInputBlur}
         InputProps={{
@@ -236,7 +246,13 @@ const LocationSearch: React.FC = () => {
           </List>
         </Paper>
       )}
-    </Box>
+      </Box>
+
+      <OverpassEditor
+        open={showQueryEditor}
+        onClose={() => setShowQueryEditor(false)}
+      />
+    </>
   );
 };
 

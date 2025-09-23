@@ -9,5 +9,9 @@
   "author": {
     "name": "Miloš Marković",
     "email": "milos.z.markovic.89@gmail.com"
+  },
+  "info": {
+    "productName": "Terrabox Desktop",
+    "productVersion": "1.0.0"
   }
 }
