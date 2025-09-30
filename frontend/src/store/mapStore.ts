@@ -1,6 +1,6 @@
-import { create } from 'zustand';
-import { FeatureCollection, Feature } from 'geojson';
-import { GeoFileIndex, IVectorLayer, MediaMetadata } from '../types/interfaces';
+import { create } from "zustand";
+import { FeatureCollection, Feature } from "geojson";
+import { GeoFileIndex, IVectorLayer, MediaMetadata } from "../types/interfaces";
 
 interface MapState {
   // Layer management
@@ -58,7 +58,9 @@ interface MapState {
   dateRange: any;
   setDateRange: (range: any) => void;
   analysisTileData: { tile_url: string; extent: number[] } | null;
-  setAnalysisTileData: (data: { tile_url: string; extent: number[] } | null) => void;
+  setAnalysisTileData: (
+    data: { tile_url: string; extent: number[] } | null
+  ) => void;
 
   // Feature selection
   selectedFeature: Feature | null;
@@ -85,24 +87,26 @@ export const useMapStore = create<MapState>((set, get) => ({
 
   // Layer visibility
   layerVisibility: {},
-  toggleLayerVisibility: (layerId) => set((state) => ({
-    layerVisibility: {
-      ...state.layerVisibility,
-      [layerId]: !state.layerVisibility[layerId]
-    }
-  })),
+  toggleLayerVisibility: (layerId) =>
+    set((state) => ({
+      layerVisibility: {
+        ...state.layerVisibility,
+        [layerId]: !state.layerVisibility[layerId],
+      },
+    })),
   allLayersVisible: true,
-  toggleAllLayers: () => set((state) => {
-    const newVisible = !state.allLayersVisible;
-    const newVisibility: { [key: string]: boolean } = {};
-    state.layers.forEach(layer => {
-      newVisibility[layer.id] = newVisible;
-    });
-    return {
-      allLayersVisible: newVisible,
-      layerVisibility: newVisibility
-    };
-  }),
+  toggleAllLayers: () =>
+    set((state) => {
+      const newVisible = !state.allLayersVisible;
+      const newVisibility: { [key: string]: boolean } = {};
+      state.layers.forEach((layer) => {
+        newVisibility[layer.id] = newVisible;
+      });
+      return {
+        allLayersVisible: newVisible,
+        layerVisibility: newVisibility,
+      };
+    }),
 
   // Search and geometry
   searchGeometry: [],
@@ -125,7 +129,7 @@ export const useMapStore = create<MapState>((set, get) => ({
   // UI state
   cursor: "auto",
   setCursor: (cursor) => set({ cursor }),
-  isPanelOpen: true,
+  isPanelOpen: false,
   setIsPanelOpen: (isPanelOpen) => set({ isPanelOpen }),
   panelWidth: 350,
   setPanelWidth: (panelWidth) => set({ panelWidth }),

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useMemo, useState } from "react";
 import {
   ThemeProvider,
   CssBaseline,
@@ -6,19 +6,20 @@ import {
   CircularProgress,
   Snackbar,
   Alert,
-  Fab,
-  Tooltip,
   Typography,
 } from "@mui/material";
-import { Menu as MenuIcon } from "@mui/icons-material";
+import { GeoJsonLayer } from "@deck.gl/layers";
+import { EditableGeoJsonLayer, DrawRectangleMode, ViewMode } from "@deck.gl-community/editable-layers";
 
 import { listIndexedFiles } from "./utils/utils";
 import { IVectorLayer } from "./types/interfaces";
+import { FeatureCollection } from "geojson";
 import MapControls from "./components/MapControls";
 import FilePanel from "./components/FilePanel";
-import LocationSearch from "./components/LocationSearch";
 import EditControls from "./components/EditControls";
-import FeatureDetailsDialog from "./components/FeatureDetailsDialog";
+import BufferTool from "./components/BufferTool";
+import OverpassPanel from "./components/OverpassPanel";
+import FeatureDetailsPanel from "./components/FeatureDetailsDialog";
 import MapRenderer from "./components/MapRenderer";
 import { liquidGlassTheme } from "./theme/liquidGlassTheme";
 import { useDeckLayers } from "./hooks/useDeckLayers";
@@ -87,6 +88,18 @@ function App() {
   const [dragStartPosition, setDragStartPosition] = React.useState<
     [number, number] | null
   >(null);
+  const [isDrawingBounds, setIsDrawingBounds] = React.useState<boolean>(false);
+  const [featureDetailsPanelOpen, setFeatureDetailsPanelOpen] = React.useState<boolean>(false);
+  const [bufferToolPanelOpen, setBufferToolPanelOpen] = React.useState<boolean>(false);
+  const [drawnBounds, setDrawnBounds] = React.useState<
+    [number, number, number, number] | null
+  >(null);
+  const [drawingStartCoord, setDrawingStartCoord] = React.useState<
+    [number, number] | null
+  >(null);
+  const [isMouseDown, setIsMouseDown] = React.useState<boolean>(false);
+  const [isOverpassPanelOpen, setIsOverpassPanelOpen] =
+    React.useState<boolean>(false);
 
   // Throttle viewport updates to improve performance
   const throttleRef = useRef<NodeJS.Timeout | null>(null);
@@ -127,8 +140,15 @@ function App() {
     setIsPanelOpen(isOpen);
   };
 
+
   const handleDeckFeatureClick = useCallback(
     (info: any, event: any) => {
+      // Handle bounds drawing mode
+      if (isDrawingBounds) {
+        // Bounds drawing is handled by mouse events
+        return;
+      }
+
       if (editMode !== "view") {
         // Handle feature selection in edit mode
         if (info.object && info.index !== undefined) {
@@ -142,12 +162,20 @@ function App() {
 
       if (info.object) {
         setSelectedFeature(info.object);
+        setFeatureDetailsPanelOpen(true);
         console.log("Feature clicked:", info);
       } else {
         setSelectedFeature(null);
+        setFeatureDetailsPanelOpen(false);
       }
     },
-    [editMode, setSelectedFeature, setSelectedEditFeatureIndexes]
+    [
+      editMode,
+      isDrawingBounds,
+      setSelectedFeature,
+      setSelectedEditFeatureIndexes,
+      setFeatureDetailsPanelOpen,
+    ]
   );
 
   const handleDeckFeatureHover = useCallback(
@@ -195,6 +223,29 @@ function App() {
     setPanelWidth(width);
   };
 
+  // Bounds drawing handlers
+  const handleStartDrawingBounds = () => {
+    setIsDrawingBounds(true);
+    setDrawnBounds(null);
+    setBoundsFeatureCollection({ type: "FeatureCollection", features: [] });
+    setBoundsDrawingMode(new DrawRectangleMode());
+    // Exit any current edit mode
+    setEditMode("view");
+    setEditableLayerId(null);
+  };
+
+  const handleFinishDrawingBounds = () => {
+    setIsDrawingBounds(false);
+    // The bounds will remain in drawnBounds state for use in queries
+  };
+
+  const handleCancelDrawingBounds = () => {
+    setIsDrawingBounds(false);
+    setDrawnBounds(null);
+    setBoundsFeatureCollection({ type: "FeatureCollection", features: [] });
+    setBoundsDrawingMode(new DrawRectangleMode());
+  };
+
   useEffect(() => {
     // Load indexed files on component mount
     listIndexedFiles()
@@ -210,7 +261,8 @@ function App() {
   // Handle escape key to close feature details
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && selectedFeature) {
+      if (event.key === "Escape" && featureDetailsPanelOpen) {
+        setFeatureDetailsPanelOpen(false);
         setSelectedFeature(null);
       }
     };
@@ -219,7 +271,7 @@ function App() {
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [selectedFeature, setSelectedFeature]);
+  }, [featureDetailsPanelOpen]);
 
   // Handle edit events
   const handleEditEvent = (info: any, layer: IVectorLayer) => {
@@ -363,6 +415,124 @@ function App() {
     layerUpdateCounter,
   });
 
+  // Bounds drawing data for EditableGeoJsonLayer
+  const [boundsFeatureCollection, setBoundsFeatureCollection] = useState<any>({
+    type: "FeatureCollection",
+    features: []
+  });
+  const [boundsDrawingMode, setBoundsDrawingMode] = useState<any>(new DrawRectangleMode());
+
+  // Add bounds drawing layer
+  const boundsDrawingLayer = useMemo(() => {
+    if (!isDrawingBounds) {
+      return null;
+    }
+
+    return new EditableGeoJsonLayer({
+      id: "bounds-drawing-layer",
+      data: boundsFeatureCollection,
+      mode: boundsDrawingMode,
+      selectedFeatureIndexes: [],
+      onEdit: ({ updatedData, editType, editContext }) => {
+        console.log("Edit event:", editType, editContext);
+        setBoundsFeatureCollection(updatedData);
+
+        // When rectangle drawing is completed
+        if (editType === 'addFeature' && updatedData.features.length > 0) {
+          const feature = updatedData.features[updatedData.features.length - 1];
+          if (feature.geometry.type === 'Polygon' && feature.geometry.coordinates[0]) {
+            const coords = feature.geometry.coordinates[0];
+
+            // Calculate bounds from polygon coordinates
+            let minLng = Infinity, maxLng = -Infinity;
+            let minLat = Infinity, maxLat = -Infinity;
+
+            coords.forEach(([lng, lat]: [number, number]) => {
+              minLng = Math.min(minLng, lng);
+              maxLng = Math.max(maxLng, lng);
+              minLat = Math.min(minLat, lat);
+              maxLat = Math.max(maxLat, lat);
+            });
+
+            setDrawnBounds([minLng, minLat, maxLng, maxLat]);
+
+            // Switch to view mode to end drawing
+            setBoundsDrawingMode(new ViewMode());
+
+            // Auto-finish drawing after rectangle is created
+            setTimeout(() => {
+              handleFinishDrawingBounds();
+            }, 100);
+          }
+        }
+      },
+      pickable: true,
+      stroked: true,
+      filled: true,
+      lineWidthMinPixels: 3,
+      getFillColor: [156, 39, 176, 50], // Purple with transparency
+      getLineColor: [156, 39, 176, 255], // Solid purple outline
+      getLineWidth: 3,
+    });
+  }, [isDrawingBounds, boundsFeatureCollection, boundsDrawingMode]);
+
+  // Visualization layer for drawn bounds (when not actively drawing)
+  const boundsVisualizationLayer = useMemo(() => {
+    if (!drawnBounds || isDrawingBounds) {
+      return null;
+    }
+
+    const [west, south, east, north] = drawnBounds;
+
+    const boundsGeoJSON: FeatureCollection = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          properties: { name: "Query Bounds" },
+          geometry: {
+            type: "Polygon",
+            coordinates: [
+              [
+                [west, north],
+                [east, north],
+                [east, south],
+                [west, south],
+                [west, north],
+              ],
+            ],
+          },
+        },
+      ],
+    };
+
+    return new GeoJsonLayer({
+      id: "bounds-visualization-layer",
+      data: boundsGeoJSON,
+      pickable: false,
+      stroked: true,
+      filled: true,
+      lineWidthMinPixels: 3,
+      getFillColor: [156, 39, 176, 30], // Purple with transparency
+      getLineColor: [156, 39, 176, 200], // Solid purple outline
+      getLineWidth: 2,
+    });
+  }, [drawnBounds, isDrawingBounds]);
+
+  // Combine all layers
+  const allLayers = useMemo(() => {
+    const layers = [...deckLayersToRender];
+
+    // Add bounds drawing or visualization layer
+    if (boundsDrawingLayer) {
+      layers.push(boundsDrawingLayer);
+    } else if (boundsVisualizationLayer) {
+      layers.push(boundsVisualizationLayer);
+    }
+
+    return layers;
+  }, [deckLayersToRender, boundsDrawingLayer, boundsVisualizationLayer]);
+
   return (
     <ThemeProvider theme={liquidGlassTheme}>
       <CssBaseline />
@@ -389,11 +559,19 @@ function App() {
           },
         }}
       >
-        <Box sx={{ flex: 1, position: "relative" }}>
+        <Box
+          sx={{
+            flex: 1,
+            position: "relative",
+            marginLeft: isPanelOpen ? `${panelWidth}px` : "40px",
+            marginBottom: isOverpassPanelOpen ? "400px" : "35px",
+            transition: "margin-left 0.3s ease, margin-bottom 0.3s ease",
+          }}
+        >
           <MapRenderer
             mapStyle={mapStyle}
             mapboxAccessToken={MAPBOX_ACCESS_TOKEN}
-            deckLayers={deckLayersToRender}
+            deckLayers={allLayers}
             cursor={cursor}
             onDeckFeatureClick={handleDeckFeatureClick}
             onDeckFeatureHover={handleDeckFeatureHover}
@@ -403,8 +581,73 @@ function App() {
 
           <MapControls mapStyle={mapStyle} setMapStyle={handleStyleChange} />
 
-          {/* Location Search */}
-          <LocationSearch />
+          {/* Simple drawing notification */}
+          {isDrawingBounds && (
+            <Snackbar
+              open={true}
+              anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+              sx={{ mt: 2 }}
+            >
+              <Alert
+                severity="info"
+                sx={{
+                  backgroundColor: 'rgba(156, 39, 176, 0.95)',
+                  color: 'white',
+                  '& .MuiAlert-icon': {
+                    color: 'white'
+                  }
+                }}
+              >
+                Click and drag to draw query bounds
+              </Alert>
+            </Snackbar>
+          )}
+
+          {/* Buffer Tool Panel */}
+          <BufferTool
+            selectedFeatures={
+              editableLayerId && selectedEditFeatureIndexes.length > 0
+                ? selectedEditFeatureIndexes
+                    .map((index) => {
+                      const layer = layers.find(
+                        (l) => l.id === editableLayerId
+                      );
+                      return layer?.data?.features?.[index];
+                    })
+                    .filter(Boolean)
+                : []
+            }
+            layerData={
+              editableLayerId
+                ? layers.find((l) => l.id === editableLayerId)?.data
+                : null
+            }
+            onApplyBuffer={(bufferedFeatures) => {
+              if (!editableLayerId) return;
+
+              const layer = layers.find((l) => l.id === editableLayerId);
+              if (!layer) return;
+
+              const updatedData = { ...layer.data };
+              selectedEditFeatureIndexes.forEach((index, i) => {
+                if (bufferedFeatures[i]) {
+                  updatedData.features[index] = bufferedFeatures[i];
+                }
+              });
+
+              const updatedLayers = layers.map((l) => {
+                if (l.id === editableLayerId) {
+                  return { ...l, data: updatedData };
+                }
+                return l;
+              });
+
+              setLayers(updatedLayers);
+              setLayerUpdateCounter((prev) => prev + 1);
+            }}
+            isOpen={bufferToolPanelOpen}
+            onToggle={setBufferToolPanelOpen}
+          />
 
           {/* Edit Controls */}
           <EditControls
@@ -440,31 +683,23 @@ function App() {
             }}
           />
 
-          {/* File Panel Toggle Button */}
-          {!isPanelOpen && (
-            <Tooltip title="Open File Panel" placement="right">
-              <Fab
-                color="primary"
-                size="small"
-                onClick={() => handlePanelToggle(true)}
-                sx={{
-                  color: "white",
-                  position: "absolute",
-                  top: 16,
-                  left: 16,
-                  zIndex: 1000,
-                }}
-              >
-                <MenuIcon />
-              </Fab>
-            </Tooltip>
-          )}
-
           {/* File Panel */}
           <FilePanel
             open={isPanelOpen}
-            onClose={() => handlePanelToggle(false)}
+            onToggle={setIsPanelOpen}
             width={panelWidth}
+            drawnBounds={drawnBounds}
+          />
+
+          {/* Overpass Panel */}
+          <OverpassPanel
+            isOpen={isOverpassPanelOpen}
+            onToggle={setIsOverpassPanelOpen}
+            drawnBounds={drawnBounds}
+            isDrawingBounds={isDrawingBounds}
+            onStartDrawingBounds={handleStartDrawingBounds}
+            onFinishDrawingBounds={handleFinishDrawingBounds}
+            onCancelDrawingBounds={handleCancelDrawingBounds}
           />
 
           {/* Loading indicator */}
@@ -549,11 +784,16 @@ function App() {
             </Box>
           )}
 
-          {/* Feature Details Dialog */}
-          <FeatureDetailsDialog
+          {/* Feature Details Panel */}
+          <FeatureDetailsPanel
             feature={selectedFeature}
-            open={!!selectedFeature}
-            onClose={() => setSelectedFeature(null)}
+            isOpen={featureDetailsPanelOpen}
+            onToggle={(isOpen) => {
+              setFeatureDetailsPanelOpen(isOpen);
+              if (!isOpen) {
+                setSelectedFeature(null);
+              }
+            }}
           />
         </Box>
       </Box>

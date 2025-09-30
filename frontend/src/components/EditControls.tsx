@@ -1,9 +1,6 @@
 import React, { useState } from "react";
 import {
   Box,
-  SpeedDial,
-  SpeedDialAction,
-  SpeedDialIcon,
   Tooltip,
   Fab,
   ButtonGroup,
@@ -17,21 +14,14 @@ import {
   Timeline,
   Pentagon,
   Place,
-  Save,
-  Cancel,
-  Visibility,
-  Delete,
-  EditAttributes,
+  RectangleOutlined,
+  CircleOutlined,
   Transform,
   ZoomOutMap,
   OpenWith,
   RotateRight,
-  CropFree,
-  RectangleOutlined,
-  CircleOutlined,
-  Download,
-  FileDownload,
 } from "@mui/icons-material";
+import EditingControls from "./EditingControls";
 import GeoJSONExportModal from "./GeoJSONExportModal";
 import { WriteFile, SelectDirectory } from "../../wailsjs/go/main/App";
 
@@ -45,6 +35,134 @@ interface EditControlsProps {
   onSave?: () => void;
   onCancel?: () => void;
 }
+
+interface RadialMenuItem {
+  icon: React.ReactElement;
+  title: string;
+  mode: string;
+}
+
+const RadialMenu: React.FC<{ onModeChange: (mode: string) => void }> = ({
+  onModeChange,
+}) => {
+  const [isOpen, setIsOpen] = useState(false);
+
+  const menuItems: RadialMenuItem[] = [
+    { icon: <NearMe />, title: "Modify Features", mode: "modify" },
+    { icon: <Transform />, title: "Transform", mode: "transform" },
+    { icon: <ZoomOutMap />, title: "Scale", mode: "scale" },
+    { icon: <OpenWith />, title: "Translate", mode: "translate" },
+    { icon: <RotateRight />, title: "Rotate", mode: "rotate" },
+    { icon: <Place />, title: "Draw Points", mode: "drawPoint" },
+    { icon: <Timeline />, title: "Draw Lines", mode: "drawLine" },
+    { icon: <Pentagon />, title: "Draw Polygons", mode: "drawPolygon" },
+    {
+      icon: <RectangleOutlined />,
+      title: "Draw Rectangles",
+      mode: "drawRectangle",
+    },
+    { icon: <CircleOutlined />, title: "Draw Circles", mode: "drawCircle" },
+  ];
+
+  const baseRadius = 60; // Inner row distance
+  const radiusStep = 45; // Distance between rows
+  const fanAngle = Math.PI * 0.5; // 90 degrees fan spread (horizontal to vertical)
+  const startAngle = -Math.PI; // Start horizontally to the left
+
+  // Define items per row dynamically - fewer items in inner rows
+  const itemsPerRowConfig = [3, 4, 5];
+
+  // Create row assignments
+  const getRowAssignments = () => {
+    const assignments = [];
+    let itemIndex = 0;
+
+    for (let row = 0; row < itemsPerRowConfig.length; row++) {
+      const itemsInRow = itemsPerRowConfig[row];
+      for (let i = 0; i < itemsInRow && itemIndex < menuItems.length; i++) {
+        assignments.push({ row, positionInRow: i, itemsInThisRow: itemsInRow });
+        itemIndex++;
+      }
+    }
+
+    return assignments;
+  };
+
+  const rowAssignments = getRowAssignments();
+
+  const handleItemClick = (mode: string) => {
+    onModeChange(mode);
+    setIsOpen(false);
+  };
+
+  return (
+    <Box sx={{ position: "relative" }}>
+      {/* Center FAB */}
+      <Fab
+        onClick={() => setIsOpen(!isOpen)}
+        sx={{
+          background: "linear-gradient(135deg, #FF7F50 0%, #FF9E80 100%)",
+          color: "white",
+          boxShadow: 3,
+          "&:hover": {
+            background: "linear-gradient(135deg, #FF8658 0%, #FFA888 100%)",
+            boxShadow: 6,
+          },
+        }}
+      >
+        <Edit />
+      </Fab>
+
+      {/* Fan Menu Items in Dynamic Rows */}
+      {menuItems.map((item, index) => {
+        if (index >= rowAssignments.length) return null;
+
+        const { row, positionInRow, itemsInThisRow } = rowAssignments[index];
+
+        // Calculate angle for this item within its row
+        const angleStep = fanAngle / Math.max(1, itemsInThisRow - 1);
+        const angle = startAngle + positionInRow * angleStep;
+
+        // Calculate position with row-specific radius
+        const radius = baseRadius + row * radiusStep;
+        const x = Math.cos(angle) * radius;
+        const y = Math.sin(angle) * radius;
+
+        // Determine tooltip placement based on position
+        const tooltipPlacement =
+          x < -20 ? "right" : y < -20 ? "bottom" : "left";
+
+        return (
+          <Tooltip key={index} title={item.title} placement={tooltipPlacement}>
+            <Fab
+              size="small"
+              onClick={() => handleItemClick(item.mode)}
+              sx={{
+                position: "absolute",
+                left: x,
+                top: y,
+                background: "rgba(255, 255, 255, 0.9)",
+                color: "#FF7F50",
+                boxShadow: 2,
+                transition: "all 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                opacity: isOpen ? 1 : 0,
+                scale: isOpen ? 1 : 0,
+                transitionDelay: isOpen ? `${index * 20}ms` : "0ms",
+                "&:hover": {
+                  background: "white",
+                  color: "#FF7F50",
+                  boxShadow: 4,
+                },
+              }}
+            >
+              {item.icon}
+            </Fab>
+          </Tooltip>
+        );
+      })}
+    </Box>
+  );
+};
 
 const EditControls: React.FC<EditControlsProps> = ({
   editMode,
@@ -86,18 +204,6 @@ const EditControls: React.FC<EditControlsProps> = ({
       );
       setEditableLayerId(editableLayers[0].id);
     }
-  };
-
-  const handleCancel = () => {
-    setEditMode("view");
-    setEditableLayerId(null);
-    if (onCancel) onCancel();
-  };
-
-  const handleSave = () => {
-    if (onSave) onSave();
-    setEditMode("view");
-    setEditableLayerId(null);
   };
 
   const openExportModal = (data: any, filename: string) => {
@@ -166,193 +272,26 @@ const EditControls: React.FC<EditControlsProps> = ({
       <Box
         sx={{
           position: "absolute",
-          bottom: 30,
-          right: 20,
+          bottom: 15,
+          right: 15,
           zIndex: 1000,
           color: "white",
         }}
       >
         {!isEditing ? (
-          <SpeedDial
-            ariaLabel="Edit tools"
-            icon={<SpeedDialIcon icon={<Edit sx={{ color: "white" }} />} />}
-            direction="up"
-            FabProps={{
-              sx: {
-                background: "linear-gradient(135deg, #FF7F50 0%, #FF9E80 100%)",
-                color: "white",
-                boxShadow: 3,
-                "&:hover": {
-                  background:
-                    "linear-gradient(135deg, #FF8658 0%, #FFA888 100%)",
-                  boxShadow: 6,
-                },
-              },
-            }}
-          >
-            <SpeedDialAction
-              icon={<NearMe />}
-              tooltipTitle="Modify Features"
-              onClick={() => handleModeChange("modify")}
-            />
-            <SpeedDialAction
-              icon={<Transform />}
-              tooltipTitle="Transform (Scale/Rotate/Move)"
-              onClick={() => handleModeChange("transform")}
-            />
-            <SpeedDialAction
-              icon={<ZoomOutMap />}
-              tooltipTitle="Scale Features"
-              onClick={() => handleModeChange("scale")}
-            />
-            <SpeedDialAction
-              icon={<OpenWith />}
-              tooltipTitle="Translate/Move Features"
-              onClick={() => handleModeChange("translate")}
-            />
-            <SpeedDialAction
-              icon={<RotateRight />}
-              tooltipTitle="Rotate Features"
-              onClick={() => handleModeChange("rotate")}
-            />
-            <SpeedDialAction
-              icon={<Place />}
-              tooltipTitle="Draw Points"
-              onClick={() => handleModeChange("drawPoint")}
-            />
-            <SpeedDialAction
-              icon={<Timeline />}
-              tooltipTitle="Draw Lines"
-              onClick={() => handleModeChange("drawLine")}
-            />
-            <SpeedDialAction
-              icon={<Pentagon />}
-              tooltipTitle="Draw Polygons"
-              onClick={() => handleModeChange("drawPolygon")}
-            />
-            <SpeedDialAction
-              icon={<RectangleOutlined />}
-              tooltipTitle="Draw Rectangles"
-              onClick={() => handleModeChange("drawRectangle")}
-            />
-            <SpeedDialAction
-              icon={<CircleOutlined />}
-              tooltipTitle="Draw Circles"
-              onClick={() => handleModeChange("drawCircle")}
-            />
-          </SpeedDial>
+          <RadialMenu onModeChange={handleModeChange} />
         ) : (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
-            <Tooltip title="Save Changes" placement="left">
-              <Fab onClick={handleSave} size="medium">
-                <Save />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Cancel Editing" placement="left">
-              <Fab onClick={handleCancel} size="medium">
-                <Cancel />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Export Layer to GeoJSON" placement="left">
-              <Fab
-                onClick={handleExportLayer}
-                size="medium"
-                disabled={!editableLayerId}
-              >
-                <Download />
-              </Fab>
-            </Tooltip>
-            {selectedEditFeatureIndexes.length > 0 && (
-              <Tooltip
-                title="Export Selected Features to GeoJSON"
-                placement="left"
-              >
-                <Fab
-                  color="secondary"
-                  onClick={handleExportSelected}
-                  size="medium"
-                >
-                  <FileDownload />
-                </Fab>
-              </Tooltip>
-            )}
-            <Tooltip title="View Mode" placement="left">
-              <Fab
-                onClick={() => setEditMode("view")}
-                size="medium"
-                sx={{
-                  backgroundColor:
-                    editMode === "view" ? "primary.main" : "background.paper",
-                }}
-              >
-                <Visibility />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Modify Mode" placement="left">
-              <Fab
-                onClick={() => setEditMode("modify")}
-                size="medium"
-                sx={{
-                  backgroundColor:
-                    editMode === "modify" ? "primary.main" : "background.paper",
-                }}
-              >
-                <EditAttributes />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Transform Mode" placement="left">
-              <Fab
-                onClick={() => setEditMode("transform")}
-                size="medium"
-                sx={{
-                  backgroundColor:
-                    editMode === "transform"
-                      ? "primary.main"
-                      : "background.paper",
-                }}
-              >
-                <Transform />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Scale Mode" placement="left">
-              <Fab
-                onClick={() => setEditMode("scale")}
-                size="medium"
-                sx={{
-                  backgroundColor:
-                    editMode === "scale" ? "primary.main" : "background.paper",
-                }}
-              >
-                <ZoomOutMap />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Translate Mode" placement="left">
-              <Fab
-                onClick={() => setEditMode("translate")}
-                size="medium"
-                sx={{
-                  backgroundColor:
-                    editMode === "translate"
-                      ? "primary.main"
-                      : "background.paper",
-                }}
-              >
-                <OpenWith />
-              </Fab>
-            </Tooltip>
-            <Tooltip title="Rotate Mode" placement="left">
-              <Fab
-                onClick={() => setEditMode("rotate")}
-                size="medium"
-                sx={{
-                  backgroundColor:
-                    editMode === "rotate" ? "primary.main" : "background.paper",
-                }}
-              >
-                <RotateRight />
-              </Fab>
-            </Tooltip>
-          </Box>
+          <EditingControls
+            editMode={editMode}
+            setEditMode={setEditMode}
+            editableLayerId={editableLayerId}
+            setEditableLayerId={setEditableLayerId}
+            selectedEditFeatureIndexes={selectedEditFeatureIndexes}
+            onSave={onSave}
+            onCancel={onCancel}
+            onExportLayer={handleExportLayer}
+            onExportSelected={handleExportSelected}
+          />
         )}
       </Box>
 
@@ -361,16 +300,17 @@ const EditControls: React.FC<EditControlsProps> = ({
         <Paper
           sx={{
             position: "absolute",
-            top: 80,
+            top: 10,
             left: "50%",
             transform: "translateX(-50%)",
-            padding: 2,
+            px: 1,
+            py: 0.5,
             zIndex: 1000,
             backgroundColor: "rgba(255, 140, 0, 0.9)",
             color: "white",
           }}
         >
-          <Typography variant="h6">
+          <Typography sx={{ fontWeight: 600 }}>
             {editMode === "modify" && "Modify Mode"}
             {editMode === "transform" && "Transform Mode"}
             {editMode === "scale" && "Scale Mode"}
@@ -382,7 +322,7 @@ const EditControls: React.FC<EditControlsProps> = ({
             {editMode === "drawRectangle" && "Draw Rectangles"}
             {editMode === "drawCircle" && "Draw Circles"}
           </Typography>
-          <Typography variant="caption">
+          <Typography variant="body2" sx={{ fontSize: "0.75rem" }}>
             {editMode === "modify" &&
               "Click features to select, drag vertices to modify"}
             {editMode === "transform" &&
@@ -411,7 +351,7 @@ const EditControls: React.FC<EditControlsProps> = ({
         <Paper
           sx={{
             position: "absolute",
-            top: 160,
+            top: 200,
             right: 20,
             padding: 2,
             zIndex: 1000,

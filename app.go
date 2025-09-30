@@ -1137,6 +1137,100 @@ out geom;`,
 );
 out geom;`,
 		},
+		{
+			"name":        "Administrative Boundaries",
+			"description": "Countries, states, counties, cities, and other administrative boundaries",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:25];
+(
+  relation["boundary"="administrative"]({{bbox}});
+  relation["admin_level"~"^[2-8]$"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "Land Use Boundaries",
+			"description": "Residential, commercial, industrial, and other land use areas",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:25];
+(
+  way["landuse"]({{bbox}});
+  relation["landuse"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "Country/State Outlines",
+			"description": "Major political boundaries (countries, states, provinces)",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:30];
+(
+  relation["boundary"="administrative"]["admin_level"~"^[2-4]$"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "City/County Boundaries",
+			"description": "Local administrative boundaries (cities, counties, municipalities)",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:25];
+(
+  relation["boundary"="administrative"]["admin_level"~"^[5-8]$"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "Postal Code Areas",
+			"description": "ZIP codes, postal districts, and mailing areas",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:25];
+(
+  relation["boundary"="postal_code"]({{bbox}});
+  relation["postal_code"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "Protected Areas",
+			"description": "National parks, nature reserves, and protected land",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:25];
+(
+  relation["boundary"="protected_area"]({{bbox}});
+  relation["boundary"="national_park"]({{bbox}});
+  relation["leisure"="nature_reserve"]({{bbox}});
+  way["boundary"="protected_area"]({{bbox}});
+  way["boundary"="national_park"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "Coastlines and Water Boundaries",
+			"description": "Shorelines, lake boundaries, and water body outlines",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:25];
+(
+  way["natural"="coastline"]({{bbox}});
+  way["natural"="water"]({{bbox}});
+  relation["natural"="water"]({{bbox}});
+  relation["waterway"="riverbank"]({{bbox}});
+);
+out geom;`,
+		},
+		{
+			"name":        "Islands and Archipelagos",
+			"description": "Island outlines, archipelagos, and island boundaries",
+			"category":    "boundaries",
+			"query": `[out:json][timeout:30];
+(
+  relation["place"="island"]({{bbox}});
+  relation["place"="archipelago"]({{bbox}});
+  way["place"="island"]({{bbox}});
+  way["natural"="coastline"]({{bbox}});
+  relation["boundary"="administrative"]["place"~"island|archipelago"]({{bbox}});
+);
+out geom;`,
+		},
 	}
 
 	return templates
@@ -1196,6 +1290,12 @@ For categories, extract relevant OpenStreetMap tags like:
 - "park", "leisure" for recreation
 - "highway" for roads
 - "amenity" for general amenities
+- "boundary", "administrative" for land outlines, borders, boundaries
+- "landuse", "land_use" for land use areas
+- "coastline", "water" for shorelines and water boundaries
+- "protected_area", "national_park" for protected areas
+- "postal_code" for postal/zip code boundaries
+- "island", "islands", "archipelago" for island outlines and archipelagos
 
 Return only the JSON object, no other text.`, description, fallbackBbox[0], fallbackBbox[1], fallbackBbox[2], fallbackBbox[3])
 
@@ -1349,13 +1449,32 @@ func (a *App) SaveEditedOSMData(geojsonData map[string]interface{}, filename str
 // buildOverpassQuery constructs the Overpass query from OpenAI location data
 func (a *App) buildOverpassQuery(locationData *LocationData, description string) string {
 	bbox := locationData.BoundingBox
-	// bbox comes as [west, south, east, north] format from frontend/OpenAI
+	// bbox comes as [west, south, east, north] format from turf.bbox()
+	// but Overpass API expects (south, west, north, east)
 	west, south, east, north := bbox[0], bbox[1], bbox[2], bbox[3]
+
+	// Check if this is an island/archipelago request - prioritize coastline queries
+	isIslandRequest := false
+	for _, category := range locationData.Categories {
+		if category == "island" || category == "islands" || category == "archipelago" || category == "isle" {
+			isIslandRequest = true
+			break
+		}
+	}
 
 	// Build query based on detected categories with comprehensive coverage (nodes, ways, relations)
 	var queries []string
-	for _, category := range locationData.Categories {
-		switch category {
+
+	// For island requests, prioritize coastline and place tags
+	if isIslandRequest {
+		queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		queries = append(queries, fmt.Sprintf(`  relation["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		queries = append(queries, fmt.Sprintf(`  way["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		queries = append(queries, fmt.Sprintf(`  relation["place"="archipelago"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+	} else {
+		// Regular category processing for non-island requests
+		for _, category := range locationData.Categories {
+			switch category {
 		case "restaurant", "cafe", "fast_food":
 			queries = append(queries, fmt.Sprintf(`  node["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
 			queries = append(queries, fmt.Sprintf(`  way["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
@@ -1379,6 +1498,29 @@ func (a *App) buildOverpassQuery(locationData *LocationData, description string)
 			queries = append(queries, fmt.Sprintf(`  node["amenity"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
 			queries = append(queries, fmt.Sprintf(`  way["amenity"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
 			queries = append(queries, fmt.Sprintf(`  relation["amenity"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		case "boundary", "administrative", "land_outline", "outline", "border":
+			queries = append(queries, fmt.Sprintf(`  relation["boundary"="administrative"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  relation["admin_level"~"^[2-8]$"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		case "landuse", "land_use":
+			queries = append(queries, fmt.Sprintf(`  way["landuse"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  relation["landuse"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		case "coastline", "coast", "water", "shoreline":
+			queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  way["natural"="water"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  relation["natural"="water"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		case "protected_area", "national_park", "nature_reserve":
+			queries = append(queries, fmt.Sprintf(`  relation["boundary"="protected_area"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  relation["boundary"="national_park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  way["boundary"="protected_area"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		case "postal_code", "zip_code":
+			queries = append(queries, fmt.Sprintf(`  relation["boundary"="postal_code"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  relation["postal_code"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		case "island", "islands", "archipelago", "isle":
+			queries = append(queries, fmt.Sprintf(`  relation["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  relation["place"="archipelago"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  way["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+		}
 		}
 	}
 

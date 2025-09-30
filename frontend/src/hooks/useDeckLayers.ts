@@ -86,13 +86,17 @@ export const useDeckLayers = ({
         );
         // Create an editable layer
         // Get the most current data from layers state
-        const currentLayer = layers.find(l => l.id === layer.id);
+        const currentLayer = layers.find((l) => l.id === layer.id);
         let geoJsonData =
           currentLayer?.data?.type === "FeatureCollection"
             ? currentLayer.data
             : ({ type: "FeatureCollection", features: [] } as any);
 
-        console.log(`🔄 Using current layer data for ${layer.id}, features: ${geoJsonData.features?.length || 0}`);
+        console.log(
+          `🔄 Using current layer data for ${layer.id}, features: ${
+            geoJsonData.features?.length || 0
+          }`
+        );
 
         // More robust coordinate validation and cleaning
         if (geoJsonData.features) {
@@ -109,43 +113,65 @@ export const useDeckLayers = ({
 
                 switch (type) {
                   case "Point":
-                    if (coords.length >= 2 &&
-                        typeof coords[0] === "number" &&
-                        typeof coords[1] === "number" &&
-                        !isNaN(coords[0]) && !isNaN(coords[1])) {
+                    if (
+                      coords.length >= 2 &&
+                      typeof coords[0] === "number" &&
+                      typeof coords[1] === "number" &&
+                      !isNaN(coords[0]) &&
+                      !isNaN(coords[1])
+                    ) {
                       return [coords[0], coords[1]];
                     }
                     return null;
                   case "LineString":
-                    const cleanLine = coords.map((coord: any) => {
-                      if (Array.isArray(coord) && coord.length >= 2 &&
-                          typeof coord[0] === "number" && typeof coord[1] === "number" &&
-                          !isNaN(coord[0]) && !isNaN(coord[1])) {
-                        return [coord[0], coord[1]];
-                      }
-                      return null;
-                    }).filter(c => c !== null);
-                    return cleanLine.length >= 2 ? cleanLine : null;
-                  case "Polygon":
-                    const cleanRings = coords.map((ring: any) => {
-                      if (!Array.isArray(ring)) return null;
-                      const cleanRing = ring.map((coord: any) => {
-                        if (Array.isArray(coord) && coord.length >= 2 &&
-                            typeof coord[0] === "number" && typeof coord[1] === "number" &&
-                            !isNaN(coord[0]) && !isNaN(coord[1])) {
+                    const cleanLine = coords
+                      .map((coord: any) => {
+                        if (
+                          Array.isArray(coord) &&
+                          coord.length >= 2 &&
+                          typeof coord[0] === "number" &&
+                          typeof coord[1] === "number" &&
+                          !isNaN(coord[0]) &&
+                          !isNaN(coord[1])
+                        ) {
                           return [coord[0], coord[1]];
                         }
                         return null;
-                      }).filter(c => c !== null);
-                      return cleanRing.length >= 4 ? cleanRing : null;
-                    }).filter(r => r !== null);
+                      })
+                      .filter((c) => c !== null);
+                    return cleanLine.length >= 2 ? cleanLine : null;
+                  case "Polygon":
+                    const cleanRings = coords
+                      .map((ring: any) => {
+                        if (!Array.isArray(ring)) return null;
+                        const cleanRing = ring
+                          .map((coord: any) => {
+                            if (
+                              Array.isArray(coord) &&
+                              coord.length >= 2 &&
+                              typeof coord[0] === "number" &&
+                              typeof coord[1] === "number" &&
+                              !isNaN(coord[0]) &&
+                              !isNaN(coord[1])
+                            ) {
+                              return [coord[0], coord[1]];
+                            }
+                            return null;
+                          })
+                          .filter((c) => c !== null);
+                        return cleanRing.length >= 4 ? cleanRing : null;
+                      })
+                      .filter((r) => r !== null);
                     return cleanRings.length >= 1 ? cleanRings : null;
                   default:
                     return coords; // Pass through complex geometries
                 }
               };
 
-              const cleanedCoords = cleanCoordinates(feature.geometry.coordinates, feature.geometry.type);
+              const cleanedCoords = cleanCoordinates(
+                feature.geometry.coordinates,
+                feature.geometry.type
+              );
               if (cleanedCoords) {
                 feature.geometry.coordinates = cleanedCoords;
                 return true;
@@ -222,8 +248,10 @@ export const useDeckLayers = ({
           getLineWidth: (feature: any) => {
             // For EditableGeoJsonLayer, we need to find the feature index manually
             // since the second parameter signature isn't compatible
-            const featureIndex = geoJsonData.features?.findIndex((f: any) => f === feature) ?? -1;
-            const isSelected = selectedEditFeatureIndexes.includes(featureIndex);
+            const featureIndex =
+              geoJsonData.features?.findIndex((f: any) => f === feature) ?? -1;
+            const isSelected =
+              selectedEditFeatureIndexes.includes(featureIndex);
 
             if (isSelected) {
               return 4; // Thicker line for selected features
@@ -238,17 +266,33 @@ export const useDeckLayers = ({
             return 2; // Border width for polygons
           },
 
+          getRadius: (feature: any) => {
+            const featureIndex =
+              geoJsonData.features?.findIndex((f: any) => f === feature) ?? -1;
+            const isSelected =
+              selectedEditFeatureIndexes.includes(featureIndex);
+
+            if (isSelected) {
+              return 25; // Larger point for selected features
+            }
+            return 18; // Larger default point size
+          },
 
           filled: true,
           stroked: true,
           pickable: true,
           autoHighlight: true,
 
+          // Point sizing settings (EditableGeoJsonLayer expects older prop names)
+          pointRadiusMinPixels: 15,
+          pointRadiusMaxPixels: 35,
+
           // Update triggers for selection highlighting
           updateTriggers: {
             getFillColor: [selectedEditFeatureIndexes],
             getLineColor: [selectedEditFeatureIndexes],
             getLineWidth: [selectedEditFeatureIndexes],
+            getRadius: [selectedEditFeatureIndexes],
           },
         });
 
@@ -296,7 +340,7 @@ export const useDeckLayers = ({
             return 2; // Border width for polygons
           },
 
-          getPointRadius: 8,
+          getRadius: 12,
           pickable: false, // Don't interfere with editing
           radiusScale: 1,
           lineWidthScale: 1,
@@ -310,7 +354,7 @@ export const useDeckLayers = ({
           `📋 Layer ${layer.id} is not in edit mode, creating regular GeoJsonLayer`
         );
         // Regular non-editable layer - use current layer data from layers state
-        const currentLayer = layers.find(l => l.id === layer.id);
+        const currentLayer = layers.find((l) => l.id === layer.id);
         const mainLayer = new GeoJsonLayer({
           id: `${layer.id}-${index}`, // Stable ID
           data: currentLayer?.data || layer.data,
@@ -384,18 +428,18 @@ export const useDeckLayers = ({
             }
             return 3; // Thicker borders for polygon visibility
           },
-          getPointRadius: (feature: any) => {
+          getRadius: (feature: any) => {
             if (selectedDeckFeature && feature === selectedDeckFeature) {
-              return 20; // Larger point for selected
+              return 25; // Larger point for selected
             }
-            return 15; // Default point size
+            return 18; // Larger default point size
           },
 
           // Stable settings
           radiusScale: 1,
           lineWidthScale: 1,
-          radiusMinPixels: 10, // Minimum point size
-          radiusMaxPixels: 20, // Maximum point size
+          radiusMinPixels: 15, // Larger minimum point size for better visibility when zoomed out
+          radiusMaxPixels: 35, // Larger maximum point size
           lineWidthMinPixels: 2, // Minimum line width for better visibility
           lineWidthMaxPixels: 10, // Maximum line width to ensure lines/polygons are visible
 
@@ -407,7 +451,7 @@ export const useDeckLayers = ({
             getFillColor: [selectedDeckFeature, hoveredDeckFeature],
             getLineColor: [selectedDeckFeature],
             getLineWidth: [selectedDeckFeature],
-            getPointRadius: [selectedDeckFeature],
+            getRadius: [selectedDeckFeature],
           },
 
           // Disable transitions for better performance

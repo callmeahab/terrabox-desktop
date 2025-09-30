@@ -19,6 +19,10 @@ import { useMapLayers, useLayerVisibility } from "../hooks/useMapLayers";
 
 const MAP_STYLES = [
   {
+    name: "Hybrid",
+    url: "mapbox://styles/mapbox/mapbox-hybrid-v12",
+  },
+  {
     name: "Dark",
     url: "mapbox://styles/mapbox/dark-v11",
   },

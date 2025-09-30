@@ -1,20 +1,15 @@
 import React, { useState, useCallback, useRef } from "react";
 import {
   Box,
-  Drawer,
   Typography,
   List,
   ListItem,
-  ListItemText,
-  ListItemIcon,
   IconButton,
   TextField,
   InputAdornment,
   Chip,
-  Divider,
   Tooltip,
   Button,
-  Fab,
   Menu,
   MenuItem,
   Dialog,
@@ -31,13 +26,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Visibility,
-  VisibilityOff,
   Refresh,
   Add,
   Info,
   CloudUpload,
   MoreVert,
-  Code,
 } from "@mui/icons-material";
 import {
   useMapLayers,
@@ -48,7 +41,6 @@ import {
 import { GeoFileIndex, IVectorLayer } from "../types/interfaces";
 import { FeatureCollection } from "geojson";
 import IndexingDialog from "./IndexingDialog";
-import OverpassEditor from "./OverpassEditor";
 import proj4 from "proj4";
 import { ShapefileLoader } from "@loaders.gl/shapefile";
 // import { GeoPackageLoader } from '@loaders.gl/geopackage'; // Commented out due to build issues
@@ -58,11 +50,17 @@ import JSZip from "jszip";
 
 interface FilePanelProps {
   open: boolean;
-  onClose: () => void;
+  onToggle: (isOpen: boolean) => void;
   width: number;
+  drawnBounds?: [number, number, number, number] | null;
 }
 
-const FilePanel: React.FC<FilePanelProps> = ({ open, onClose, width }) => {
+const FilePanel: React.FC<FilePanelProps> = ({
+  open,
+  onToggle,
+  width,
+  drawnBounds,
+}) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFolder, setSelectedFolder] = useState<string>("/");
   const [indexingDialogOpen, setIndexingDialogOpen] = useState(false);
@@ -79,7 +77,6 @@ const FilePanel: React.FC<FilePanelProps> = ({ open, onClose, width }) => {
     file: GeoFileIndex | null;
   }>({ open: false, file: null });
   const [isDragOver, setIsDragOver] = useState(false);
-  const [overpassEditorOpen, setOverpassEditorOpen] = useState(false);
 
   const { addLayer, layers } = useMapLayers();
   const { indexedFiles, selectedFiles, setSelectedFiles } = useFileManagement();
@@ -812,455 +809,603 @@ const FilePanel: React.FC<FilePanelProps> = ({ open, onClose, width }) => {
   }, [width]);
 
   return (
-    <Drawer
-      anchor="left"
-      open={open}
-      variant="persistent"
-      PaperProps={{
-        onDragOver: handleDragOver,
-        onDragLeave: handleDragLeave,
-        onDrop: handleDrop,
-        sx: {
-          width: panelWidth,
-          bgcolor: "rgba(30, 30, 30, 0.85)",
-          backdropFilter: "blur(10px)",
-          borderRight: "1px solid rgba(255, 255, 255, 0.1)",
-          borderColor: "divider",
-          zIndex: 1200,
-          position: "fixed",
-          height: "100vh",
-          top: 0,
-          left: 0,
-          ...(isDragOver && {
-            bgcolor: "rgba(33, 150, 243, 0.1)",
-            borderRight: "2px solid #2196f3",
-          }),
+    <Paper
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onClick={() => !open && onToggle(true)}
+      sx={{
+        position: "fixed",
+        left: open ? 0 : -panelWidth + 40,
+        top: 0,
+        bottom: 0,
+        width: panelWidth,
+        background: open ? "rgba(15, 23, 42, 0.85)" : "rgba(15, 23, 42, 0.95)",
+        backdropFilter: open ? "blur(10px)" : "blur(5px)",
+        borderRight: open
+          ? "1px solid rgba(255, 255, 255, 0.2)"
+          : "1px solid rgba(255, 255, 255, 0.1)",
+        cursor: !open ? "pointer" : "default",
+        "&:hover": !open
+          ? {
+              borderRight: "2px solid rgba(16, 185, 129, 0.5)",
+              transform: "translateX(2px)",
+              boxShadow:
+                "6px 0 24px rgba(16, 185, 129, 0.3), inset -1px 0 0 rgba(255, 255, 255, 0.15)",
+              background: "rgba(15, 23, 42, 0.98)",
+              "& .expand-icon": {
+                color: "#10b981",
+                transform: "scale(1.1)",
+                filter: "drop-shadow(0 0 8px rgba(16, 185, 129, 0.5))",
+              },
+            }
+          : {},
+        borderLeft: "none",
+        boxShadow: open
+          ? "8px 0 32px rgba(0, 0, 0, 0.3), inset -1px 0 0 rgba(255, 255, 255, 0.1)"
+          : "4px 0 16px rgba(0, 0, 0, 0.2), inset -1px 0 0 rgba(255, 255, 255, 0.05)",
+        display: "flex",
+        flexDirection: "column",
+        zIndex: 1200,
+        overflow: "hidden",
+        transition:
+          "left 0.3s ease, transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease",
+        "@keyframes pulse": {
+          "0%, 100%": {
+            opacity: 0.6,
+            transform: "scale(1)",
+          },
+          "50%": {
+            opacity: 1,
+            transform: "scale(1.1)",
+          },
         },
+        ...(isDragOver && {
+          background: "rgba(16, 185, 129, 0.1)",
+          borderRight: "2px solid #10b981",
+        }),
       }}
     >
-      <Box sx={{ p: 2 }}>
-        <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
-          <Typography variant="h6" sx={{ flexGrow: 1 }}>
-            Geospatial Files
-          </Typography>
-          <IconButton onClick={onClose} size="small">
-            <ChevronLeft />
-          </IconButton>
-        </Box>
-
-        <TextField
-          fullWidth
-          size="small"
-          placeholder="Search files..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          InputProps={{
-            startAdornment: (
-              <InputAdornment position="start">
-                <Search />
-              </InputAdornment>
-            ),
-          }}
-          sx={{ mb: 2 }}
-        />
-
-        {/* Drag & Drop Zone */}
-        {isDragOver && (
-          <Paper
-            sx={{
-              p: 3,
-              mb: 2,
-              textAlign: "center",
-              border: "2px dashed #2196f3",
-              bgcolor: "rgba(33, 150, 243, 0.1)",
-            }}
-          >
-            <CloudUpload sx={{ fontSize: 48, color: "primary.main", mb: 1 }} />
-            <Typography variant="h6" color="primary">
-              Drop files here to load
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Supports: GeoJSON, CSV, KML, KMZ, Shapefile
-            </Typography>
-          </Paper>
-        )}
-
+      {/* Expand Icon - Always visible on the edge when collapsed */}
+      {!open && (
         <Box
           sx={{
+            position: "absolute",
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: 40,
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            mb: 1,
+            justifyContent: "center",
+            pointerEvents: "none", // Let parent handle the click
+            zIndex: 1201,
           }}
         >
-          <Box>
-            <Typography variant="subtitle2" color="text.secondary">
-              Found {filteredFiles.length} files
-            </Typography>
-            {(selectedFiles || []).length > 0 && (
-              <Typography variant="caption" color="primary">
-                {(selectedFiles || []).length} selected
-              </Typography>
-            )}
-          </Box>
-          <Box>
-            <Tooltip title="Overpass Query Editor">
-              <IconButton
-                size="small"
-                onClick={() => setOverpassEditorOpen(true)}
-                color="secondary"
-              >
-                <Code />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Refresh files">
-              <IconButton size="small" onClick={() => window.location.reload()}>
-                <Refresh />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="Index new files">
-              <IconButton
-                size="small"
-                onClick={() => setIndexingDialogOpen(true)}
-                color="primary"
-              >
-                <Add />
-              </IconButton>
-            </Tooltip>
-          </Box>
-        </Box>
-      </Box>
-
-      {/* File List */}
-      <Box sx={{ flex: 1, overflow: "auto" }}>
-        <List dense>
-          {filteredFiles.map((file) => (
-            <ListItem
-              key={file.id}
-              onClick={() => handleFileSelect(file)}
-              onContextMenu={(e) => handleContextMenu(e, file)}
-              sx={{
-                py: 1,
-                px: 2,
-                cursor: "pointer",
-                minHeight: "auto",
-                backgroundColor: (selectedFiles || []).some(
-                  (f) => f.id === file.id
-                )
-                  ? "rgba(16, 185, 129, 0.2)"
-                  : "transparent",
-                color: "inherit",
-                "&:hover": {
-                  backgroundColor: (selectedFiles || []).some(
-                    (f) => f.id === file.id
-                  )
-                    ? "rgba(16, 185, 129, 0.3)"
-                    : "rgba(16, 185, 129, 0.08)",
-                  backdropFilter: "blur(10px)",
-                },
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  width: "100%",
-                  overflow: "hidden",
-                }}
-              >
-                <Box
-                  sx={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 1,
-                    flex: 1,
-                    overflow: "hidden",
-                  }}
-                >
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      fontWeight: 500,
-                      flex: 1,
-                      fontSize: "0.8rem",
-                    }}
-                  >
-                    {file.file_name}
-                  </Typography>
-                  <Chip
-                    label={file.file_type}
-                    size="small"
-                    sx={{
-                      height: 16,
-                      fontSize: "0.6rem",
-                      fontWeight: 600,
-                      bgcolor: getFileTypeColor(file.file_type),
-                      color: "white",
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Typography
-                    variant="caption"
-                    color="text.secondary"
-                    sx={{
-                      flexShrink: 0,
-                      whiteSpace: "nowrap",
-                      fontSize: "0.65rem",
-                    }}
-                  >
-                    {formatFileSize(file.file_size)}
-                    {file.num_features > 0 && ` • ${file.num_features}`}
-                  </Typography>
-                </Box>
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleContextMenu(e, file);
-                  }}
-                  sx={{
-                    ml: 1,
-                    flexShrink: 0,
-                    background: "rgba(255, 255, 255, 0.05)",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  <MoreVert fontSize="small" />
-                </IconButton>
-              </Box>
-            </ListItem>
-          ))}
-        </List>
-
-        {filteredFiles.length === 0 && (
           <Box
             sx={{
-              p: 4,
-              textAlign: "center",
-              color: "text.secondary",
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              background:
+                "linear-gradient(90deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.6) 50%, rgba(15, 23, 42, 0.8) 100%)",
+              borderRadius: "0 12px 12px 0",
             }}
           >
-            <Typography variant="body2">No geospatial files found</Typography>
-            <Typography variant="caption">
-              {searchQuery
-                ? "Try adjusting your search query"
-                : "Add some geospatial files to get started"}
-            </Typography>
+            <ChevronRight
+              className="expand-icon"
+              sx={{
+                color: "#ffffff",
+                fontSize: 32,
+                fontWeight: "bold",
+                opacity: 0.9,
+                transition: "all 0.2s ease",
+                filter: "drop-shadow(0 0 4px rgba(255, 255, 255, 0.3))",
+              }}
+            />
           </Box>
+        </Box>
+      )}
+
+      {/* Header Bar */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          px: 2,
+          py: 1,
+          minHeight: 48,
+          borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
+          background: "rgba(255, 255, 255, 0.05)",
+          visibility: open ? "visible" : "hidden", // Hide when collapsed but maintain layout
+        }}
+      >
+        {open && (
+          <>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Folder color="primary" />
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                Files
+              </Typography>
+              <Chip
+                label={`${filteredFiles.length} items`}
+                size="small"
+                variant="outlined"
+                sx={{
+                  background: "rgba(52, 168, 83, 0.1)",
+                  border: "1px solid rgba(52, 168, 83, 0.3)",
+                  color: "#34a853",
+                }}
+              />
+            </Box>
+            <IconButton
+              size="small"
+              onClick={() => onToggle(false)}
+              sx={{
+                color: "rgba(255, 255, 255, 0.7)",
+                "&:hover": { color: "white" },
+              }}
+            >
+              <ChevronLeft />
+            </IconButton>
+          </>
         )}
       </Box>
 
-      {/* Context Menu */}
-      <Menu
-        open={contextMenu !== null}
-        onClose={handleContextMenuClose}
-        anchorReference="anchorPosition"
-        anchorPosition={
-          contextMenu !== null
-            ? { top: contextMenu.mouseY, left: contextMenu.mouseX }
-            : undefined
-        }
-        PaperProps={{
-          sx: {
-            bgcolor: "rgba(30, 30, 30, 0.9)",
-            backdropFilter: "blur(10px)",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-          },
-        }}
-      >
-        <MenuItem
-          onClick={() => {
-            if (contextMenu?.file) {
-              handleLoadLayer(contextMenu.file);
-            }
-            handleContextMenuClose();
-          }}
-        >
-          <Visibility sx={{ mr: 1 }} />
-          Load as Layer
-        </MenuItem>
-        <MenuItem
-          onClick={() => {
-            if (contextMenu?.file) {
-              handleShowProperties(contextMenu.file);
-            }
-          }}
-        >
-          <Info sx={{ mr: 1 }} />
-          Properties
-        </MenuItem>
-      </Menu>
-
-      {/* Properties Dialog */}
-      <Dialog
-        open={propertiesDialog.open}
-        onClose={() => setPropertiesDialog({ open: false, file: null })}
-        maxWidth="sm"
-        fullWidth
-        PaperProps={{
-          sx: {
-            bgcolor: "rgba(30, 30, 30, 0.9)",
-            backdropFilter: "blur(10px)",
-            border: "1px solid rgba(255, 255, 255, 0.1)",
-          },
-        }}
-      >
-        <DialogTitle>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Map />
-            File Properties
-          </Box>
-        </DialogTitle>
-        <DialogContent>
-          {propertiesDialog.file && (
-            <Paper sx={{ p: 2, bgcolor: "rgba(255, 255, 255, 0.05)" }}>
-              <Typography variant="h6" gutterBottom>
-                {propertiesDialog.file.file_name}
-              </Typography>
-              <Box
-                sx={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 2,
-                  mb: 2,
-                }}
-              >
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Type
-                  </Typography>
-                  <Typography variant="body2">
-                    {propertiesDialog.file.file_type}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Size
-                  </Typography>
-                  <Typography variant="body2">
-                    {formatFileSize(propertiesDialog.file.file_size)}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    CRS
-                  </Typography>
-                  <Typography variant="body2">
-                    {propertiesDialog.file.crs}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Features
-                  </Typography>
-                  <Typography variant="body2">
-                    {propertiesDialog.file.num_features}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Created
-                  </Typography>
-                  <Typography variant="body2">
-                    {new Date(
-                      propertiesDialog.file.created_at * 1000
-                    ).toLocaleDateString()}
-                  </Typography>
-                </Box>
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Modified
-                  </Typography>
-                  <Typography variant="body2">
-                    {new Date(
-                      propertiesDialog.file.modified_at * 1000
-                    ).toLocaleDateString()}
-                  </Typography>
-                </Box>
-              </Box>
-              <Box sx={{ mb: 2 }}>
-                <Typography variant="caption" color="text.secondary">
-                  Path
-                </Typography>
-                <Typography variant="body2" sx={{ wordBreak: "break-all" }}>
-                  {propertiesDialog.file.file_path}
-                </Typography>
-              </Box>
-              {propertiesDialog.file.bbox && (
-                <Box>
-                  <Typography variant="caption" color="text.secondary">
-                    Bounds
-                  </Typography>
-                  <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
-                    {propertiesDialog.file.bbox}
-                  </Typography>
-                </Box>
-              )}
-            </Paper>
-          )}
-        </DialogContent>
-        <DialogActions
+      {open && (
+        <Box
           sx={{
-            justifyContent: "center",
-            padding: 2,
-            gap: 1,
+            p: 1.5,
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
           }}
         >
-          <Button
-            onClick={() => setPropertiesDialog({ open: false, file: null })}
-          >
-            Close
-          </Button>
-          {propertiesDialog.file && (
-            <Button
-              variant="contained"
-              onClick={() => {
-                handleLoadLayer(propertiesDialog.file!);
-                setPropertiesDialog({ open: false, file: null });
+          <TextField
+            fullWidth
+            size="small"
+            placeholder="Search files..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search sx={{ fontSize: 18 }} />
+                </InputAdornment>
+              ),
+            }}
+            sx={{
+              mb: 1.5,
+              "& .MuiOutlinedInput-root": {
+                backgroundColor: "rgba(0, 0, 0, 0.2)",
+                height: 36,
+                "& fieldset": {
+                  borderColor: "rgba(255, 255, 255, 0.2)",
+                },
+                "&:hover fieldset": {
+                  borderColor: "rgba(255, 255, 255, 0.3)",
+                },
+                "&.Mui-focused fieldset": {
+                  borderColor: "#10b981",
+                },
+              },
+              "& .MuiInputBase-input": {
+                color: "#ffffff",
+                fontSize: "0.875rem",
+              },
+            }}
+          />
+
+          {/* Drag & Drop Zone */}
+          {isDragOver && (
+            <Paper
+              sx={{
+                p: 3,
+                mb: 2,
+                textAlign: "center",
+                border: "2px dashed #10b981",
+                bgcolor: "rgba(16, 185, 129, 0.1)",
+                backgroundColor: "rgba(16, 185, 129, 0.1)",
               }}
             >
-              Load as Layer
-            </Button>
+              <CloudUpload sx={{ fontSize: 48, color: "#10b981", mb: 1 }} />
+              <Typography variant="h6" sx={{ color: "#10b981" }}>
+                Drop files here to load
+              </Typography>
+              <Typography
+                variant="caption"
+                sx={{ color: "rgba(255, 255, 255, 0.7)" }}
+              >
+                Supports: GeoJSON, CSV, KML, KMZ, Shapefile
+              </Typography>
+            </Paper>
           )}
-        </DialogActions>
-      </Dialog>
 
-      {/* Indexing Dialog */}
-      <IndexingDialog
-        open={indexingDialogOpen}
-        onClose={() => setIndexingDialogOpen(false)}
-      />
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              mb: 1,
+              py: 0.5,
+            }}
+          >
+            <Typography
+              variant="caption"
+              sx={{ color: "rgba(255, 255, 255, 0.6)", fontSize: "0.75rem" }}
+            >
+              {filteredFiles.length} files
+              {(selectedFiles || []).length > 0 &&
+                ` • ${(selectedFiles || []).length} selected`}
+            </Typography>
+            <Box sx={{ display: "flex", gap: 0.5 }}>
+              <Tooltip title="Refresh">
+                <IconButton
+                  size="small"
+                  onClick={() => window.location.reload()}
+                  sx={{
+                    color: "rgba(255, 255, 255, 0.7)",
+                    "&:hover": { color: "white" },
+                    p: 0.5,
+                  }}
+                >
+                  <Refresh sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Add Files">
+                <IconButton
+                  size="small"
+                  onClick={() => setIndexingDialogOpen(true)}
+                  sx={{
+                    color: "rgba(255, 255, 255, 0.7)",
+                    "&:hover": { color: "#10b981" },
+                    p: 0.5,
+                  }}
+                >
+                  <Add sx={{ fontSize: 16 }} />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </Box>
 
-      {/* Overpass Editor */}
-      <OverpassEditor
-        open={overpassEditorOpen}
-        onClose={() => setOverpassEditorOpen(false)}
-      />
+          {/* File List */}
+          <Box sx={{ flex: 1, overflow: "auto" }}>
+            <List dense>
+              {filteredFiles.map((file) => (
+                <ListItem
+                  key={file.id}
+                  onClick={() => handleFileSelect(file)}
+                  onContextMenu={(e) => handleContextMenu(e, file)}
+                  sx={{
+                    py: 0.5,
+                    px: 1.5,
+                    cursor: "pointer",
+                    minHeight: 32,
+                    borderRadius: 1,
+                    mb: 0.5,
+                    backgroundColor: (selectedFiles || []).some(
+                      (f) => f.id === file.id
+                    )
+                      ? "rgba(16, 185, 129, 0.2)"
+                      : "transparent",
+                    color: "inherit",
+                    "&:hover": {
+                      backgroundColor: (selectedFiles || []).some(
+                        (f) => f.id === file.id
+                      )
+                        ? "rgba(16, 185, 129, 0.3)"
+                        : "rgba(16, 185, 129, 0.08)",
+                    },
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      width: "100%",
+                      overflow: "hidden",
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 1,
+                        flex: 1,
+                        overflow: "hidden",
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        sx={{
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontWeight: 500,
+                          flex: 1,
+                          fontSize: "0.8rem",
+                        }}
+                      >
+                        {file.file_name}
+                      </Typography>
+                      <Chip
+                        label={file.file_type}
+                        size="small"
+                        sx={{
+                          height: 16,
+                          fontSize: "0.6rem",
+                          fontWeight: 600,
+                          bgcolor: getFileTypeColor(file.file_type),
+                          color: "white",
+                          flexShrink: 0,
+                        }}
+                      />
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{
+                          flexShrink: 0,
+                          whiteSpace: "nowrap",
+                          fontSize: "0.65rem",
+                        }}
+                      >
+                        {formatFileSize(file.file_size)}
+                        {file.num_features > 0 && ` • ${file.num_features}`}
+                      </Typography>
+                    </Box>
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleContextMenu(e, file);
+                      }}
+                      sx={{
+                        ml: 1,
+                        flexShrink: 0,
+                        background: "rgba(255, 255, 255, 0.05)",
+                        backdropFilter: "blur(10px)",
+                      }}
+                    >
+                      <MoreVert fontSize="small" />
+                    </IconButton>
+                  </Box>
+                </ListItem>
+              ))}
+            </List>
+
+            {filteredFiles.length === 0 && (
+              <Box
+                sx={{
+                  p: 4,
+                  textAlign: "center",
+                  color: "text.secondary",
+                }}
+              >
+                <Typography variant="body2">
+                  No geospatial files found
+                </Typography>
+                <Typography variant="caption">
+                  {searchQuery
+                    ? "Try adjusting your search query"
+                    : "Add some geospatial files to get started"}
+                </Typography>
+              </Box>
+            )}
+          </Box>
+
+          {/* Context Menu */}
+          <Menu
+            open={contextMenu !== null}
+            onClose={handleContextMenuClose}
+            anchorReference="anchorPosition"
+            anchorPosition={
+              contextMenu !== null
+                ? { top: contextMenu.mouseY, left: contextMenu.mouseX }
+                : undefined
+            }
+            PaperProps={{
+              sx: {
+                bgcolor: "rgba(30, 30, 30, 0.9)",
+                backdropFilter: "blur(10px)",
+                border: "1px solid rgba(255, 255, 255, 0.1)",
+              },
+            }}
+          >
+            <MenuItem
+              onClick={() => {
+                if (contextMenu?.file) {
+                  handleLoadLayer(contextMenu.file);
+                }
+                handleContextMenuClose();
+              }}
+            >
+              <Visibility sx={{ mr: 1 }} />
+              Load as Layer
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                if (contextMenu?.file) {
+                  handleShowProperties(contextMenu.file);
+                }
+              }}
+            >
+              <Info sx={{ mr: 1 }} />
+              Properties
+            </MenuItem>
+          </Menu>
+
+          {/* Properties Dialog */}
+          <Dialog
+            open={propertiesDialog.open}
+            onClose={() => setPropertiesDialog({ open: false, file: null })}
+            maxWidth="sm"
+            fullWidth
+            PaperProps={{
+              sx: {
+                bgcolor: "rgba(30, 30, 30, 0.9)",
+                backdropFilter: "blur(10px)",
+                border: "1px solid rgba(255, 255, 255, 0.1)",
+              },
+            }}
+          >
+            <DialogTitle>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Map />
+                File Properties
+              </Box>
+            </DialogTitle>
+            <DialogContent>
+              {propertiesDialog.file && (
+                <Paper sx={{ p: 2, bgcolor: "rgba(255, 255, 255, 0.05)" }}>
+                  <Typography variant="h6" gutterBottom>
+                    {propertiesDialog.file.file_name}
+                  </Typography>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 1fr",
+                      gap: 2,
+                      mb: 2,
+                    }}
+                  >
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Type
+                      </Typography>
+                      <Typography variant="body2">
+                        {propertiesDialog.file.file_type}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Size
+                      </Typography>
+                      <Typography variant="body2">
+                        {formatFileSize(propertiesDialog.file.file_size)}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        CRS
+                      </Typography>
+                      <Typography variant="body2">
+                        {propertiesDialog.file.crs}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Features
+                      </Typography>
+                      <Typography variant="body2">
+                        {propertiesDialog.file.num_features}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Created
+                      </Typography>
+                      <Typography variant="body2">
+                        {new Date(
+                          propertiesDialog.file.created_at * 1000
+                        ).toLocaleDateString()}
+                      </Typography>
+                    </Box>
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Modified
+                      </Typography>
+                      <Typography variant="body2">
+                        {new Date(
+                          propertiesDialog.file.modified_at * 1000
+                        ).toLocaleDateString()}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      Path
+                    </Typography>
+                    <Typography variant="body2" sx={{ wordBreak: "break-all" }}>
+                      {propertiesDialog.file.file_path}
+                    </Typography>
+                  </Box>
+                  {propertiesDialog.file.bbox && (
+                    <Box>
+                      <Typography variant="caption" color="text.secondary">
+                        Bounds
+                      </Typography>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: "monospace" }}
+                      >
+                        {propertiesDialog.file.bbox}
+                      </Typography>
+                    </Box>
+                  )}
+                </Paper>
+              )}
+            </DialogContent>
+            <DialogActions
+              sx={{
+                justifyContent: "center",
+                padding: 2,
+                gap: 1,
+              }}
+            >
+              <Button
+                onClick={() => setPropertiesDialog({ open: false, file: null })}
+              >
+                Close
+              </Button>
+              {propertiesDialog.file && (
+                <Button
+                  variant="contained"
+                  onClick={() => {
+                    handleLoadLayer(propertiesDialog.file!);
+                    setPropertiesDialog({ open: false, file: null });
+                  }}
+                >
+                  Load as Layer
+                </Button>
+              )}
+            </DialogActions>
+          </Dialog>
+
+          {/* Indexing Dialog */}
+          <IndexingDialog
+            open={indexingDialogOpen}
+            onClose={() => setIndexingDialogOpen(false)}
+          />
+        </Box>
+      )}
 
       {/* Resize Handle */}
-      <Box
-        ref={resizeRef}
-        onMouseDown={handleMouseDown}
-        sx={{
-          position: "absolute",
-          top: 0,
-          right: 0,
-          width: 4,
-          height: "100%",
-          cursor: "ew-resize",
-          bgcolor: "transparent",
-          "&:hover": {
-            bgcolor: "primary.main",
-            opacity: 0.3,
-          },
-          zIndex: 1000,
-        }}
-      />
-    </Drawer>
+      {open && (
+        <Box
+          ref={resizeRef}
+          onMouseDown={handleMouseDown}
+          sx={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            width: 4,
+            height: "100%",
+            cursor: "ew-resize",
+            bgcolor: "transparent",
+            "&:hover": {
+              bgcolor: "#10b981",
+              opacity: 0.5,
+            },
+            zIndex: 1000,
+          }}
+        />
+      )}
+    </Paper>
   );
 };
 
