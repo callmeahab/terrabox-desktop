@@ -87,34 +87,46 @@ const MapControls: React.FC<MapControlsProps> = ({ mapStyle, setMapStyle }) => {
   return (
     <Box
       sx={{
-        position: "absolute",
-        top: 16,
-        right: 16,
-        display: "flex",
-        flexDirection: "column",
-        gap: 1,
+        position: "fixed",
+        top: 10,
+        right: 10,
         zIndex: 1000,
+        display: "flex",
+        flexDirection: "row",
+        gap: 0.5,
+        background: "rgba(255, 255, 255, 0.1)",
+        backdropFilter: "blur(10px)",
+        padding: 0.5,
+        borderRadius: 2,
+        border: "1px solid rgba(255, 255, 255, 0.2)",
       }}
     >
       {/* Map Style Control */}
-      <Tooltip title="Map Style" placement="left">
+      <Tooltip title="Map Style" placement="bottom">
         <Fab
           size="small"
-          color="primary"
           onClick={handleStyleMenuOpen}
           sx={{
-            background: "rgba(15, 23, 42, 0.4)",
-            backdropFilter: "blur(20px)",
-            border: "1px solid rgba(16, 185, 129, 0.3)",
-            boxShadow: "0 8px 32px rgba(16, 185, 129, 0.3)",
-            "&:hover": {
-              background: "rgba(15, 23, 42, 0.6)",
-              transform: "translateY(-2px)",
-              boxShadow: "0 12px 40px rgba(16, 185, 129, 0.4)",
+            width: 32,
+            height: 32,
+            minWidth: 32,
+            minHeight: 32,
+            background: "rgba(255, 255, 255, 0.95)",
+            color: "#3b82f6",
+            boxShadow: 1,
+            "& .MuiSvgIcon-root": {
+              fontSize: "1.25rem",
             },
+            "&:hover": {
+              background: "white",
+              color: "#2563eb",
+              boxShadow: 2,
+              transform: "scale(1.08)",
+            },
+            transition: "all 0.2s ease",
           }}
         >
-          <PublicIcon sx={{ color: "white" }} />
+          <PublicIcon />
         </Fab>
       </Tooltip>
 
@@ -123,20 +135,20 @@ const MapControls: React.FC<MapControlsProps> = ({ mapStyle, setMapStyle }) => {
         open={Boolean(styleMenuAnchor)}
         onClose={handleStyleMenuClose}
         anchorOrigin={{
-          vertical: "top",
+          vertical: "bottom",
           horizontal: "left",
         }}
         transformOrigin={{
           vertical: "top",
-          horizontal: "right",
+          horizontal: "left",
         }}
         PaperProps={{
           sx: {
-            background: "rgba(15, 23, 42, 0.6)",
-            backdropFilter: "blur(30px)",
-            border: "1px solid rgba(255, 255, 255, 0.15)",
-            boxShadow:
-              "0 12px 40px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1)",
+            background: "rgba(255, 255, 255, 0.95)",
+            backdropFilter: "blur(10px)",
+            border: "1px solid rgba(255, 255, 255, 0.2)",
+            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+            mt: 1,
           },
         }}
       >
@@ -145,6 +157,14 @@ const MapControls: React.FC<MapControlsProps> = ({ mapStyle, setMapStyle }) => {
             key={style.name}
             onClick={() => handleStyleChange(style.url)}
             selected={mapStyle === style.url}
+            sx={{
+              "&.Mui-selected": {
+                backgroundColor: "rgba(59, 130, 246, 0.1)",
+                "&:hover": {
+                  backgroundColor: "rgba(59, 130, 246, 0.2)",
+                },
+              },
+            }}
           >
             {style.name}
           </MenuItem>
@@ -154,22 +174,28 @@ const MapControls: React.FC<MapControlsProps> = ({ mapStyle, setMapStyle }) => {
       {/* Layers Control */}
       {allLayers.length > 0 && (
         <>
-          <Tooltip title="Layer Visibility" placement="left">
+          <Tooltip title="Layer Visibility" placement="bottom">
             <Fab
               size="small"
-              color="primary"
               onClick={handleLayersMenuOpen}
               sx={{
-                background: "rgba(15, 23, 42, 0.4)",
-                backdropFilter: "blur(20px)",
-                border: "1px solid rgba(16, 185, 129, 0.3)",
-                boxShadow: "0 8px 32px rgba(16, 185, 129, 0.3)",
-                color: "white",
-                "&:hover": {
-                  background: "rgba(15, 23, 42, 0.6)",
-                  transform: "translateY(-2px)",
-                  boxShadow: "0 12px 40px rgba(16, 185, 129, 0.4)",
+                width: 32,
+                height: 32,
+                minWidth: 32,
+                minHeight: 32,
+                background: "rgba(255, 255, 255, 0.95)",
+                color: "#3b82f6",
+                boxShadow: 1,
+                "& .MuiSvgIcon-root": {
+                  fontSize: "1.25rem",
                 },
+                "&:hover": {
+                  background: "white",
+                  color: "#2563eb",
+                  boxShadow: 2,
+                  transform: "scale(1.08)",
+                },
+                transition: "all 0.2s ease",
               }}
             >
               <LayersIcon />
@@ -181,20 +207,22 @@ const MapControls: React.FC<MapControlsProps> = ({ mapStyle, setMapStyle }) => {
             open={Boolean(layersMenuAnchor)}
             onClose={handleLayersMenuClose}
             anchorOrigin={{
-              vertical: "top",
+              vertical: "bottom",
               horizontal: "left",
             }}
             transformOrigin={{
               vertical: "top",
-              horizontal: "right",
+              horizontal: "left",
             }}
             PaperProps={{
               sx: {
                 maxHeight: 300,
                 minWidth: 200,
-                bgcolor: "rgba(30, 30, 30, 0.9)",
+                background: "rgba(255, 255, 255, 0.95)",
                 backdropFilter: "blur(10px)",
-                border: "1px solid rgba(255, 255, 255, 0.1)",
+                border: "1px solid rgba(255, 255, 255, 0.2)",
+                boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+                mt: 1,
               },
             }}
           >

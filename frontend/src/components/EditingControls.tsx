@@ -11,6 +11,10 @@ import {
   ZoomOutMap,
   OpenWith,
   RotateRight,
+  Delete,
+  TouchApp,
+  SelectAll,
+  PanTool,
 } from "@mui/icons-material";
 
 interface EditingControlsProps {
@@ -23,6 +27,7 @@ interface EditingControlsProps {
   onCancel?: () => void;
   onExportLayer: () => void;
   onExportSelected: () => void;
+  onDelete?: () => void;
 }
 
 const EditingControls: React.FC<EditingControlsProps> = ({
@@ -35,6 +40,7 @@ const EditingControls: React.FC<EditingControlsProps> = ({
   onCancel,
   onExportLayer,
   onExportSelected,
+  onDelete,
 }) => {
   const handleSave = () => {
     if (onSave) onSave();
@@ -49,25 +55,63 @@ const EditingControls: React.FC<EditingControlsProps> = ({
   };
 
   const fabStyle = {
-    background: "linear-gradient(135deg, #FF7F50 0%, #FF9E80 100%)",
-    color: "white",
-    boxShadow: 3,
-    "&:hover": {
-      background: "linear-gradient(135deg, #FF8658 0%, #FFA888 100%)",
-      boxShadow: 6,
+    width: 32,
+    height: 32,
+    minWidth: 32,
+    minHeight: 32,
+    background: "rgba(255, 255, 255, 0.95)",
+    color: "#FF7F50",
+    boxShadow: 1,
+    "& .MuiSvgIcon-root": {
+      fontSize: "1.25rem",
     },
+    "&:hover": {
+      background: "white",
+      color: "#FF6B3D",
+      boxShadow: 2,
+      transform: "scale(1.08)",
+    },
+    transition: "all 0.2s ease",
   };
 
   const modeFabStyle = (isActive: boolean) => ({
-    backgroundColor: isActive ? "primary.main" : "background.paper",
-    color: isActive ? "white" : "text.primary",
-    "&:hover": {
-      backgroundColor: isActive ? "primary.dark" : "grey.200",
+    width: 32,
+    height: 32,
+    minWidth: 32,
+    minHeight: 32,
+    background: isActive
+      ? "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)"
+      : "rgba(255, 255, 255, 0.95)",
+    color: isActive ? "white" : "#3b82f6",
+    boxShadow: isActive ? "0 2px 8px rgba(59, 130, 246, 0.5)" : 1,
+    border: isActive ? "1px solid rgba(255, 255, 255, 0.3)" : "none",
+    "& .MuiSvgIcon-root": {
+      fontSize: "1.25rem",
     },
+    "&:hover": {
+      background: isActive
+        ? "linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)"
+        : "white",
+      color: isActive ? "white" : "#2563eb",
+      boxShadow: isActive ? "0 4px 12px rgba(59, 130, 246, 0.7)" : 2,
+      transform: "scale(1.08)",
+    },
+    transition: "all 0.2s ease",
   });
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 0.5,
+        background: "rgba(255, 255, 255, 0.1)",
+        backdropFilter: "blur(10px)",
+        padding: 0.5,
+        borderRadius: 2,
+        border: "1px solid rgba(255, 255, 255, 0.2)",
+      }}
+    >
       <Tooltip title="Save Changes" placement="left">
         <Fab onClick={handleSave} size="small" sx={fabStyle}>
           <Save />
@@ -80,12 +124,45 @@ const EditingControls: React.FC<EditingControlsProps> = ({
         </Fab>
       </Tooltip>
 
+      {selectedEditFeatureIndexes.length > 0 && (
+        <Tooltip title={`Delete ${selectedEditFeatureIndexes.length} Selected Feature${selectedEditFeatureIndexes.length > 1 ? 's' : ''} (Delete key)`} placement="left">
+          <Fab
+            onClick={onDelete}
+            size="small"
+            sx={{
+              width: 32,
+              height: 32,
+              minWidth: 32,
+              minHeight: 32,
+              background: "rgba(255, 255, 255, 0.95)",
+              color: "#dc2626",
+              boxShadow: 1,
+              "& .MuiSvgIcon-root": {
+                fontSize: "1.25rem",
+              },
+              "&:hover": {
+                background: "white",
+                color: "#b91c1c",
+                boxShadow: 2,
+                transform: "scale(1.08)",
+              },
+              transition: "all 0.2s ease",
+            }}
+          >
+            <Delete />
+          </Fab>
+        </Tooltip>
+      )}
+
       <Tooltip title="Export Layer to GeoJSON" placement="left">
         <Fab
           onClick={onExportLayer}
           size="small"
           disabled={!editableLayerId}
-          sx={fabStyle}
+          sx={{
+            ...fabStyle,
+            opacity: !editableLayerId ? 0.5 : 1,
+          }}
         >
           <Download />
         </Fab>
@@ -94,7 +171,6 @@ const EditingControls: React.FC<EditingControlsProps> = ({
       {selectedEditFeatureIndexes.length > 0 && (
         <Tooltip title="Export Selected Features to GeoJSON" placement="left">
           <Fab
-            color="secondary"
             onClick={onExportSelected}
             size="small"
             sx={fabStyle}
@@ -114,7 +190,37 @@ const EditingControls: React.FC<EditingControlsProps> = ({
         </Fab>
       </Tooltip>
 
-      <Tooltip title="Modify Mode" placement="left">
+      <Tooltip title="Select Features" placement="left">
+        <Fab
+          onClick={() => setEditMode("select")}
+          size="small"
+          sx={modeFabStyle(editMode === "select")}
+        >
+          <TouchApp />
+        </Fab>
+      </Tooltip>
+
+      <Tooltip title="Select by Area" placement="left">
+        <Fab
+          onClick={() => setEditMode("selectByArea")}
+          size="small"
+          sx={modeFabStyle(editMode === "selectByArea")}
+        >
+          <SelectAll />
+        </Fab>
+      </Tooltip>
+
+      <Tooltip title="Move Features" placement="left">
+        <Fab
+          onClick={() => setEditMode("translate")}
+          size="small"
+          sx={modeFabStyle(editMode === "translate")}
+        >
+          <PanTool />
+        </Fab>
+      </Tooltip>
+
+      <Tooltip title="Modify Vertices" placement="left">
         <Fab
           onClick={() => setEditMode("modify")}
           size="small"
@@ -141,16 +247,6 @@ const EditingControls: React.FC<EditingControlsProps> = ({
           sx={modeFabStyle(editMode === "scale")}
         >
           <ZoomOutMap />
-        </Fab>
-      </Tooltip>
-
-      <Tooltip title="Translate Mode" placement="left">
-        <Fab
-          onClick={() => setEditMode("translate")}
-          size="small"
-          sx={modeFabStyle(editMode === "translate")}
-        >
-          <OpenWith />
         </Fab>
       </Tooltip>
 

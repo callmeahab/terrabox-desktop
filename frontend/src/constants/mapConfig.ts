@@ -11,16 +11,16 @@ export const MAPBOX_ACCESS_TOKEN =
 
 export const MAP_STYLES = [
   {
-    name: "Streets",
-    url: "mapbox://styles/mapbox/streets-v12",
-  },
-  {
     name: "Hybrid",
     url: "mapbox://styles/mapbox/satellite-streets-v12",
   },
   {
     name: "Dark",
     url: "mapbox://styles/mapbox/dark-v11",
+  },
+  {
+    name: "Streets",
+    url: "mapbox://styles/mapbox/streets-v12",
   },
   {
     name: "Light",

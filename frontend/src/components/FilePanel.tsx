@@ -53,6 +53,8 @@ interface FilePanelProps {
   onToggle: (isOpen: boolean) => void;
   width: number;
   drawnBounds?: [number, number, number, number] | null;
+  onZoomToBounds?: (bounds: { minLng: number; minLat: number; maxLng: number; maxLat: number }) => void;
+  onCalculateBounds?: (geojsonData: FeatureCollection) => { minLng: number; minLat: number; maxLng: number; maxLat: number } | null;
 }
 
 const FilePanel: React.FC<FilePanelProps> = ({
@@ -60,6 +62,8 @@ const FilePanel: React.FC<FilePanelProps> = ({
   onToggle,
   width,
   drawnBounds,
+  onZoomToBounds,
+  onCalculateBounds,
 }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedFolder, setSelectedFolder] = useState<string>("/");
@@ -175,6 +179,8 @@ const FilePanel: React.FC<FilePanelProps> = ({
 
           // Load the layer directly
           await handleLoadLayer(tempFile);
+
+          console.log(`✅ Successfully loaded dropped file: ${file.name}`);
         } catch (error) {
           console.error("Error loading dropped file:", error);
         }
@@ -718,9 +724,17 @@ const FilePanel: React.FC<FilePanelProps> = ({
       addLayer(newLayer);
 
       // Calculate bounds and zoom to the layer
-      const bounds = calculateBounds(geojsonData);
-      if (bounds) {
-        zoomToBounds(bounds);
+      if (onCalculateBounds && onZoomToBounds) {
+        const bounds = onCalculateBounds(geojsonData);
+        if (bounds) {
+          onZoomToBounds(bounds);
+        }
+      } else {
+        // Fallback to local calculation if props not provided
+        const bounds = calculateBounds(geojsonData);
+        if (bounds) {
+          zoomToBounds(bounds);
+        }
       }
     } catch (error) {
       console.error("Error loading layer:", error);

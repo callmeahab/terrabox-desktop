@@ -20,6 +20,9 @@ import {
   ZoomOutMap,
   OpenWith,
   RotateRight,
+  TouchApp,
+  SelectAll,
+  PanTool,
 } from "@mui/icons-material";
 import EditingControls from "./EditingControls";
 import GeoJSONExportModal from "./GeoJSONExportModal";
@@ -34,6 +37,7 @@ interface EditControlsProps {
   selectedEditFeatureIndexes: number[];
   onSave?: () => void;
   onCancel?: () => void;
+  onDelete?: () => void;
 }
 
 interface RadialMenuItem {
@@ -48,11 +52,16 @@ const RadialMenu: React.FC<{ onModeChange: (mode: string) => void }> = ({
   const [isOpen, setIsOpen] = useState(false);
 
   const menuItems: RadialMenuItem[] = [
-    { icon: <NearMe />, title: "Modify Features", mode: "modify" },
+    // Basic editing modes (first row - most common)
+    { icon: <TouchApp />, title: "Select Features", mode: "select" },
+    { icon: <SelectAll />, title: "Select by Area", mode: "selectByArea" },
+    { icon: <PanTool />, title: "Move Features", mode: "translate" },
+    // Advanced editing modes (second row)
+    { icon: <NearMe />, title: "Modify Vertices", mode: "modify" },
     { icon: <Transform />, title: "Transform", mode: "transform" },
     { icon: <ZoomOutMap />, title: "Scale", mode: "scale" },
-    { icon: <OpenWith />, title: "Translate", mode: "translate" },
     { icon: <RotateRight />, title: "Rotate", mode: "rotate" },
+    // Drawing modes (third row)
     { icon: <Place />, title: "Draw Points", mode: "drawPoint" },
     { icon: <Timeline />, title: "Draw Lines", mode: "drawLine" },
     { icon: <Pentagon />, title: "Draw Polygons", mode: "drawPolygon" },
@@ -64,8 +73,8 @@ const RadialMenu: React.FC<{ onModeChange: (mode: string) => void }> = ({
     { icon: <CircleOutlined />, title: "Draw Circles", mode: "drawCircle" },
   ];
 
-  const baseRadius = 60; // Inner row distance
-  const radiusStep = 45; // Distance between rows
+  const baseRadius = 40; // Inner row distance
+  const radiusStep = 30; // Distance between rows
   const fanAngle = Math.PI * 0.5; // 90 degrees fan spread (horizontal to vertical)
   const startAngle = -Math.PI; // Start horizontally to the left
 
@@ -96,18 +105,38 @@ const RadialMenu: React.FC<{ onModeChange: (mode: string) => void }> = ({
   };
 
   return (
-    <Box sx={{ position: "relative" }}>
+    <Box
+      sx={{
+        position: "relative",
+        background: "rgba(255, 255, 255, 0.1)",
+        backdropFilter: "blur(10px)",
+        padding: 0.5,
+        borderRadius: 2,
+        border: "1px solid rgba(255, 255, 255, 0.2)",
+      }}
+    >
       {/* Center FAB */}
       <Fab
         onClick={() => setIsOpen(!isOpen)}
+        size="small"
         sx={{
-          background: "linear-gradient(135deg, #FF7F50 0%, #FF9E80 100%)",
-          color: "white",
-          boxShadow: 3,
-          "&:hover": {
-            background: "linear-gradient(135deg, #FF8658 0%, #FFA888 100%)",
-            boxShadow: 6,
+          width: 32,
+          height: 32,
+          minWidth: 32,
+          minHeight: 32,
+          background: "rgba(255, 255, 255, 0.95)",
+          color: "#FF7F50",
+          boxShadow: 1,
+          "& .MuiSvgIcon-root": {
+            fontSize: "1.25rem",
           },
+          "&:hover": {
+            background: "white",
+            color: "#FF6B3D",
+            boxShadow: 2,
+            transform: "scale(1.08)",
+          },
+          transition: "all 0.2s ease",
         }}
       >
         <Edit />
@@ -141,9 +170,16 @@ const RadialMenu: React.FC<{ onModeChange: (mode: string) => void }> = ({
                 position: "absolute",
                 left: x,
                 top: y,
+                width: 28,
+                height: 28,
+                minWidth: 28,
+                minHeight: 28,
                 background: "rgba(255, 255, 255, 0.9)",
                 color: "#FF7F50",
-                boxShadow: 2,
+                boxShadow: 1,
+                "& .MuiSvgIcon-root": {
+                  fontSize: "1.1rem",
+                },
                 transition: "all 0.15s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
                 opacity: isOpen ? 1 : 0,
                 scale: isOpen ? 1 : 0,
@@ -151,7 +187,7 @@ const RadialMenu: React.FC<{ onModeChange: (mode: string) => void }> = ({
                 "&:hover": {
                   background: "white",
                   color: "#FF7F50",
-                  boxShadow: 4,
+                  boxShadow: 2,
                 },
               }}
             >
@@ -173,6 +209,7 @@ const EditControls: React.FC<EditControlsProps> = ({
   selectedEditFeatureIndexes,
   onSave,
   onCancel,
+  onDelete,
 }) => {
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportData, setExportData] = useState<any>(null);
@@ -291,6 +328,7 @@ const EditControls: React.FC<EditControlsProps> = ({
             onCancel={onCancel}
             onExportLayer={handleExportLayer}
             onExportSelected={handleExportSelected}
+            onDelete={onDelete}
           />
         )}
       </Box>
@@ -303,34 +341,45 @@ const EditControls: React.FC<EditControlsProps> = ({
             top: 10,
             left: "50%",
             transform: "translateX(-50%)",
-            px: 1,
-            py: 0.5,
+            px: 2,
+            py: 1,
             zIndex: 1000,
-            backgroundColor: "rgba(255, 140, 0, 0.9)",
+            background: "linear-gradient(135deg, rgba(255, 140, 0, 0.95) 0%, rgba(255, 165, 0, 0.95) 100%)",
+            backdropFilter: "blur(10px)",
+            border: "2px solid rgba(255, 255, 255, 0.3)",
+            borderRadius: 2,
+            boxShadow: "0 4px 20px rgba(0, 0, 0, 0.3)",
             color: "white",
+            minWidth: 300,
           }}
         >
-          <Typography sx={{ fontWeight: 600 }}>
-            {editMode === "modify" && "Modify Mode"}
-            {editMode === "transform" && "Transform Mode"}
-            {editMode === "scale" && "Scale Mode"}
-            {editMode === "translate" && "Translate Mode"}
-            {editMode === "rotate" && "Rotate Mode"}
-            {editMode === "drawPoint" && "Draw Points"}
-            {editMode === "drawLine" && "Draw Lines"}
-            {editMode === "drawPolygon" && "Draw Polygons"}
-            {editMode === "drawRectangle" && "Draw Rectangles"}
-            {editMode === "drawCircle" && "Draw Circles"}
+          <Typography sx={{ fontWeight: 700, fontSize: "1rem", mb: 0.5 }}>
+            {editMode === "select" && "👆 Select Mode"}
+            {editMode === "selectByArea" && "⬚ Select by Area"}
+            {editMode === "translate" && "↔️ Move Features"}
+            {editMode === "modify" && "✏️ Modify Vertices"}
+            {editMode === "transform" && "🔄 Transform Mode"}
+            {editMode === "scale" && "📏 Scale Mode"}
+            {editMode === "rotate" && "🔃 Rotate Mode"}
+            {editMode === "drawPoint" && "📍 Draw Points"}
+            {editMode === "drawLine" && "📏 Draw Lines"}
+            {editMode === "drawPolygon" && "⬡ Draw Polygons"}
+            {editMode === "drawRectangle" && "⬜ Draw Rectangles"}
+            {editMode === "drawCircle" && "⭕ Draw Circles"}
           </Typography>
-          <Typography variant="body2" sx={{ fontSize: "0.75rem" }}>
+          <Typography variant="body2" sx={{ fontSize: "0.75rem", mb: 0.5, opacity: 0.95 }}>
+            {editMode === "select" &&
+              "Click features to select/deselect (Shift+Click for multi-select)"}
+            {editMode === "selectByArea" &&
+              "Draw a box to select all features within the area"}
+            {editMode === "translate" &&
+              "Click and drag to move selected features"}
             {editMode === "modify" &&
               "Click features to select, drag vertices to modify"}
             {editMode === "transform" &&
               "Select features and use handles to scale, rotate, or move"}
             {editMode === "scale" &&
               "Click and drag to scale selected features"}
-            {editMode === "translate" &&
-              "Click and drag to move selected features"}
             {editMode === "rotate" &&
               "Click and drag to rotate selected features"}
             {editMode === "drawPoint" && "Click to place points"}
@@ -343,6 +392,24 @@ const EditControls: React.FC<EditControlsProps> = ({
             {editMode === "drawCircle" &&
               "Click center, then drag to set radius"}
           </Typography>
+          {selectedEditFeatureIndexes.length > 0 && (
+            <Box
+              sx={{
+                mt: 1,
+                pt: 1,
+                borderTop: "1px solid rgba(255, 255, 255, 0.3)",
+              }}
+            >
+              <Typography variant="caption" sx={{ fontSize: "0.7rem", display: "block" }}>
+                <strong>{selectedEditFeatureIndexes.length}</strong> feature{selectedEditFeatureIndexes.length > 1 ? 's' : ''} selected
+              </Typography>
+              <Typography variant="caption" sx={{ fontSize: "0.65rem", opacity: 0.9, display: "block" }}>
+                {editMode === "translate" && "• Use Arrow Keys to nudge (Shift for larger steps)"}
+                • Press Delete/Backspace to remove
+                • Press Esc to deselect
+              </Typography>
+            </Box>
+          )}
         </Paper>
       )}
 
