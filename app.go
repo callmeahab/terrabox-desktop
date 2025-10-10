@@ -1430,6 +1430,46 @@ out geom;`, description, south, west, north, east, description, south, west, nor
 	}
 }
 
+// SaveFile opens a save dialog and saves content to the selected file
+func (a *App) SaveFile(defaultFilename string, content string) (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("context not available")
+	}
+
+	// Open save file dialog
+	filepath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		DefaultFilename: defaultFilename,
+		Title:           "Save GeoJSON File",
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "GeoJSON Files (*.geojson)",
+				Pattern:     "*.geojson",
+			},
+			{
+				DisplayName: "All Files (*.*)",
+				Pattern:     "*.*",
+			},
+		},
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("failed to open save dialog: %v", err)
+	}
+
+	// User cancelled
+	if filepath == "" {
+		return "", fmt.Errorf("save cancelled by user")
+	}
+
+	// Write content to file
+	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("failed to write file: %v", err)
+	}
+
+	runtime.LogInfo(a.ctx, fmt.Sprintf("Saved file to: %s", filepath))
+	return filepath, nil
+}
+
 // SaveEditedOSMData saves edited OSM data to a file
 func (a *App) SaveEditedOSMData(geojsonData map[string]interface{}, filename string) error {
 	// Create a directory for edited OSM data if it doesn't exist

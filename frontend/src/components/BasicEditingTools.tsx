@@ -53,7 +53,7 @@ const BasicEditingTools: React.FC<BasicEditingToolsProps> = ({
       sx={{
         position: "fixed",
         top: 10,
-        right: 95,
+        right: 110,
         zIndex: 1000,
         display: "flex",
         flexDirection: "row",

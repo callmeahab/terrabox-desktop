@@ -32,6 +32,8 @@ export function ReadFileAsBase64(arg1:string):Promise<string>;
 
 export function SaveEditedOSMData(arg1:Record<string, any>,arg2:string):Promise<void>;
 
+export function SaveFile(arg1:string,arg2:string):Promise<string>;
+
 export function SearchFiles(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function SelectDirectory():Promise<string>;

@@ -528,7 +528,7 @@ export const useDeckLayers = ({
         const moveEditableLayer = new EditableGeoJsonLayer({
           id: `${layer.id}-basic-move`,
           data: geoJsonData,
-          mode: TranslateMode,
+          mode: new TranslateMode(),
           selectedFeatureIndexes: selectedFeaturesForMove.indexes,
 
           onEdit: ({ updatedData, editType, editContext }: any) => {

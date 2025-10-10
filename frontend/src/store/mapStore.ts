@@ -77,7 +77,10 @@ export const useMapStore = create<MapState>((set, get) => ({
   // Layer management
   layers: [],
   setLayers: (layers) => set({ layers }),
-  addLayer: (layer) => set((state) => ({ layers: [...state.layers, layer] })),
+  addLayer: (layer) => set((state) => ({
+    layers: [...state.layers, layer],
+    layerVisibility: { ...state.layerVisibility, [layer.id]: true }
+  })),
   selectedLayer: -1,
   setSelectedLayer: (selectedLayer) => set({ selectedLayer }),
 

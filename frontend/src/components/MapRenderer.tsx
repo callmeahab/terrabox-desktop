@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect } from "react";
+import React, { memo, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Map, { Source, Layer } from "react-map-gl";
 import DeckGL from "@deck.gl/react";
 import { FlyToInterpolator } from "@deck.gl/core";
@@ -26,6 +26,7 @@ interface MapRendererProps {
   onMouseDown?: (event: any) => void;
   onMouseMove?: (event: any) => void;
   onMouseUp?: (event: any) => void;
+  isMovingFeatures?: boolean; // Disable map pan when moving features
 }
 
 const MapRenderer: React.FC<MapRendererProps> = memo(
@@ -42,29 +43,59 @@ const MapRenderer: React.FC<MapRendererProps> = memo(
     onMouseDown,
     onMouseMove,
     onMouseUp,
+    isMovingFeatures = false,
   }) => {
-    const [viewState, setViewState] = useState<any>(INITIAL_VIEW_STATE);
+    // Store current viewport for mouse handlers
+    const currentViewportRef = useRef<any>(null);
+    // Store programmatic view state - only used during transitions
+    const programmaticViewStateRef = useRef<any>(undefined);
+    // Force re-render when we need to update DeckGL's viewState prop
+    const [, forceUpdate] = useState({});
 
-    // Watch for zoom target changes
+    // Memoize controller config to prevent unnecessary re-creation
+    const controllerConfig = useMemo(
+      () => ({
+        doubleClickZoom: false,
+        inertia: true,
+        dragPan: !isMovingFeatures,
+        scrollZoom: true,
+        touchRotate: true,
+        keyboard: false,
+      }),
+      [isMovingFeatures]
+    );
+
+    // Watch for zoom target changes and imperatively set view state
     useEffect(() => {
       if (!zoomTarget) return;
 
-      // Trigger a transition
-      setViewState({
+      // Set programmatic view state with transition
+      programmaticViewStateRef.current = {
         ...zoomTarget,
         transitionDuration: 1000,
         transitionInterpolator: new FlyToInterpolator(),
-      });
+      };
+      forceUpdate({}); // Trigger re-render to pass new viewState to DeckGL
+
+      // Clear it after transition completes
+      const timer = setTimeout(() => {
+        programmaticViewStateRef.current = undefined;
+        forceUpdate({}); // Trigger re-render to return to uncontrolled
+      }, 1100);
+
+      return () => clearTimeout(timer);
     }, [zoomTarget]);
 
-    // Handle view state changes from user interaction
-    const handleViewStateChange = (evt: any) => {
-      setViewState(evt.viewState);
-      // Also call the parent's handler if provided
+    // Handle view state changes
+    const handleViewStateChange = useCallback((evt: any) => {
+      // Store viewport for mouse handlers
+      currentViewportRef.current = evt.viewState;
+
+      // Call parent's handler if provided
       if (onViewStateChange) {
         onViewStateChange(evt);
       }
-    };
+    }, [onViewStateChange]);
 
     // Wrap mouse handlers to include viewport
     const handleMouseDownWithViewport = (event: React.MouseEvent) => {
@@ -72,7 +103,7 @@ const MapRenderer: React.FC<MapRendererProps> = memo(
         onMouseDown({
           ...event,
           point: { x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY },
-          viewport: viewState,
+          viewport: currentViewportRef.current,
         });
       }
     };
@@ -82,47 +113,17 @@ const MapRenderer: React.FC<MapRendererProps> = memo(
         onMouseMove({
           ...event,
           point: { x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY },
-          viewport: viewState,
+          viewport: currentViewportRef.current,
         });
       }
     };
 
     const handleMouseUpWithViewport = (event: React.MouseEvent) => {
       if (onMouseUp) {
-        // Create a viewport object with unproject method
-        const viewport = {
-          unproject: (coords: [number, number]) => {
-            // Simple mercator unprojection
-            const { longitude, latitude, zoom } = viewState;
-            const scale = Math.pow(2, zoom);
-            const worldSize = 512 * scale;
-
-            // Get container dimensions
-            const container = (
-              event.target as HTMLElement
-            ).getBoundingClientRect();
-            const centerX = container.width / 2;
-            const centerY = container.height / 2;
-
-            // Convert screen to world coordinates
-            const worldX = (coords[0] - centerX) / worldSize;
-            const worldY = (coords[1] - centerY) / worldSize;
-
-            // Convert world to lng/lat
-            const lng = longitude + worldX * 360;
-            const lat =
-              latitude -
-              (Math.atan(Math.sinh(Math.PI * (1 - 2 * worldY))) * 180) /
-                Math.PI;
-
-            return [lng, lat];
-          },
-        };
-
         onMouseUp({
           ...event,
           point: { x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY },
-          viewport,
+          viewport: currentViewportRef.current,
         });
       }
     };
@@ -135,12 +136,10 @@ const MapRenderer: React.FC<MapRendererProps> = memo(
         onMouseUp={handleMouseUpWithViewport}
       >
         <DeckGL
-          viewState={viewState}
+          initialViewState={INITIAL_VIEW_STATE}
+          viewState={programmaticViewStateRef.current}
           onViewStateChange={handleViewStateChange}
-          controller={{
-            doubleClickZoom: false, // Disable double-click zoom for editing
-            inertia: true,
-          }}
+          controller={controllerConfig}
           layers={deckLayers}
           getCursor={
             editableLayer
@@ -154,9 +153,9 @@ const MapRenderer: React.FC<MapRendererProps> = memo(
           <Map
             mapboxAccessToken={mapboxAccessToken}
             mapStyle={mapStyle}
-            projection={{ name: "globe" }}
+            projection={{ name: "mercator" }}
             style={{ width: "100%", height: "100%" }}
-            terrain={{ source: "mapbox-dem", exaggeration: 1.5 }}
+            terrain={{ source: "mapbox-dem" }}
           >
             <Source
               id="mapbox-dem"
