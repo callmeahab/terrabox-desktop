@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -16,18 +17,21 @@ import (
 	"sync"
 	"time"
 
+	_ "github.com/marcboeker/go-duckdb"
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/paulmach/osm"
 	"github.com/paulmach/osm/osmgeojson"
 	"github.com/sashabaranov/go-openai"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
-	_ "github.com/mattn/go-sqlite3"
 )
 
 // App struct
 type App struct {
-	ctx context.Context
-	db  *sql.DB
-	mu  sync.RWMutex
+	ctx    context.Context
+	db     *sql.DB
+	duckDB *sql.DB
+	mu     sync.RWMutex
+	duckMu sync.RWMutex
 }
 
 // NewApp creates a new App application struct
@@ -40,6 +44,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.initDatabase()
+	a.initDuckDB()
 }
 
 // initDatabase initializes the SQLite database
@@ -97,6 +102,57 @@ func (a *App) initDatabase() error {
 
 	_, err = db.Exec(createTables)
 	return err
+}
+
+// initDuckDB initializes the DuckDB database with spatial extension
+func (a *App) initDuckDB() error {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	dbDir := filepath.Join(homeDir, ".terrabox")
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return err
+	}
+
+	dbPath := filepath.Join(dbDir, "terrabox.duckdb")
+	db, err := sql.Open("duckdb", dbPath)
+	if err != nil {
+		return err
+	}
+
+	a.duckDB = db
+
+	// Install and load spatial extension
+	spatialSetup := `
+		INSTALL spatial;
+		LOAD spatial;
+
+		-- Create a metadata table to track loaded files
+		CREATE TABLE IF NOT EXISTS duckdb_geo_tables (
+			id INTEGER PRIMARY KEY,
+			table_name VARCHAR,
+			file_path VARCHAR,
+			file_name VARCHAR,
+			file_type VARCHAR,
+			loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+			row_count INTEGER,
+			geom_type VARCHAR,
+			srid INTEGER
+		);
+
+		-- Create a sequence for table IDs
+		CREATE SEQUENCE IF NOT EXISTS table_id_seq START 1;
+	`
+
+	_, err = db.Exec(spatialSetup)
+	if err != nil {
+		// Log the error but continue - spatial extension might need to be installed differently
+		fmt.Printf("Warning: Could not setup DuckDB spatial extension: %v\n", err)
+	}
+
+	return nil
 }
 
 // Greet returns a greeting for the given name
@@ -322,15 +378,15 @@ func (a *App) SearchFiles(pattern string, directory string) ([]string, error) {
 
 // FileMetadata represents extracted file metadata
 type FileMetadata struct {
-	FileSize    int64               `json:"file_size"`
-	CreatedAt   int64               `json:"created_at"`
-	ModifiedAt  int64               `json:"modified_at"`
-	FileType    string              `json:"file_type"`
-	CRS         string              `json:"crs"`
-	BBox        []float64           `json:"bbox"`
-	NumFeatures int                 `json:"num_features"`
-	NumBands    int                 `json:"num_bands"`
-	Resolution  float64             `json:"resolution"`
+	FileSize    int64                  `json:"file_size"`
+	CreatedAt   int64                  `json:"created_at"`
+	ModifiedAt  int64                  `json:"modified_at"`
+	FileType    string                 `json:"file_type"`
+	CRS         string                 `json:"crs"`
+	BBox        []float64              `json:"bbox"`
+	NumFeatures int                    `json:"num_features"`
+	NumBands    int                    `json:"num_bands"`
+	Resolution  float64                `json:"resolution"`
 	Metadata    map[string]interface{} `json:"metadata"`
 }
 
@@ -349,7 +405,7 @@ func (a *App) extractFileMetadata(filePath string) (*FileMetadata, error) {
 		CreatedAt:  info.ModTime().Unix(),
 		ModifiedAt: info.ModTime().Unix(),
 		FileType:   fileType,
-		CRS:        "EPSG:4326", // Default CRS
+		CRS:        "EPSG:4326",                   // Default CRS
 		BBox:       []float64{-180, -90, 180, 90}, // Default global bbox
 		Metadata:   make(map[string]interface{}),
 	}
@@ -452,7 +508,7 @@ func (a *App) extractRasterMetadata(filePath string, metadata *FileMetadata) err
 		return a.extractGeoTIFFMetadata(filePath, metadata)
 	default:
 		// For other raster formats, use basic metadata
-		metadata.NumBands = 3 // Placeholder for RGB
+		metadata.NumBands = 3     // Placeholder for RGB
 		metadata.Resolution = 1.0 // Placeholder
 		metadata.Metadata["format"] = "raster"
 	}
@@ -717,14 +773,60 @@ func (a *App) SelectDirectory() (string, error) {
 	return selectedPath, nil
 }
 
+// SelectDataFile opens a file selection dialog for data files (CSV, GeoJSON, etc.)
+func (a *App) SelectDataFile() (string, error) {
+	if a.ctx == nil {
+		return "", fmt.Errorf("context not available")
+	}
+
+	// Use Wails runtime to open file dialog
+	options := runtime.OpenDialogOptions{
+		Title: "Select Data File",
+		Filters: []runtime.FileFilter{
+			{
+				DisplayName: "CSV Files (*.csv)",
+				Pattern:     "*.csv",
+			},
+			{
+				DisplayName: "GeoJSON Files (*.geojson, *.json)",
+				Pattern:     "*.geojson;*.json",
+			},
+			{
+				DisplayName: "All Files (*.*)",
+				Pattern:     "*.*",
+			},
+		},
+	}
+
+	selectedPath, err := runtime.OpenFileDialog(a.ctx, options)
+	if err != nil {
+		return "", fmt.Errorf("failed to open file dialog: %v", err)
+	}
+
+	// If user cancelled
+	if selectedPath == "" {
+		return "", fmt.Errorf("file selection cancelled")
+	}
+
+	return selectedPath, nil
+}
+
 // LoadGeospatialFile loads a geospatial file and converts it to GeoJSON
+// This is the UNIFIED function for loading all geospatial formats using GDAL
 func (a *App) LoadGeospatialFile(filePath string) (map[string]interface{}, error) {
 	// Check if file exists
 	if _, err := os.Stat(filePath); os.IsNotExist(err) {
 		return nil, fmt.Errorf("file does not exist: %s", filePath)
 	}
 
-	// Try to use ogr2ogr to convert to GeoJSON
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	// Special handling for CSV files - detect lat/lng columns and create VRT
+	if ext == ".csv" {
+		return a.loadCSVWithGDAL(filePath)
+	}
+
+	// For all other formats (SHP, KML, KMZ, GPKG, etc.), use ogr2ogr directly
 	cmd := exec.Command("ogr2ogr", "-f", "GeoJSON", "/dev/stdout", filePath)
 	output, err := cmd.Output()
 	if err != nil {
@@ -741,6 +843,155 @@ func (a *App) LoadGeospatialFile(filePath string) (map[string]interface{}, error
 	return geojson, nil
 }
 
+// loadCSVWithGDAL loads a CSV file and converts it to GeoJSON using GDAL
+// It auto-detects lat/lng columns and creates a VRT file for GDAL to read
+func (a *App) loadCSVWithGDAL(filePath string) (map[string]interface{}, error) {
+	// Read the first few lines to detect lat/lng columns
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open CSV file: %v", err)
+	}
+	defer file.Close()
+
+	// Read header line
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		lines = append(lines, scanner.Text())
+	}
+
+	if len(lines) < 2 {
+		return nil, fmt.Errorf("CSV file must have at least a header and one data row")
+	}
+
+	header := lines[0]
+	headers := strings.Split(header, ",")
+	for i := range headers {
+		headers[i] = strings.TrimSpace(strings.ToLower(headers[i]))
+	}
+
+	// Detect lat/lng column indices with comprehensive pattern matching
+	latIdx := -1
+	lngIdx := -1
+
+	// Define common latitude column patterns (in priority order)
+	latPatterns := []string{
+		"latitude", "lat", "latitude_deg", "lat_deg", "decimal_latitude", "dec_lat",
+		"y", "ylat", "y_coordinate", "latitude_decimal", "lat_decimal",
+	}
+
+	// Define common longitude column patterns (in priority order)
+	lngPatterns := []string{
+		"longitude", "lon", "lng", "long", "longitude_deg", "lon_deg", "lng_deg",
+		"decimal_longitude", "dec_lon", "dec_lng", "x", "xlon", "xlng",
+		"x_coordinate", "longitude_decimal", "lon_decimal", "lng_decimal",
+	}
+
+	// First pass: Look for exact matches (prioritize full names)
+	for i, h := range headers {
+		h = strings.ToLower(strings.TrimSpace(h))
+
+		// Check latitude patterns
+		if latIdx == -1 {
+			for _, pattern := range latPatterns {
+				if h == pattern {
+					latIdx = i
+					break
+				}
+			}
+		}
+
+		// Check longitude patterns
+		if lngIdx == -1 {
+			for _, pattern := range lngPatterns {
+				if h == pattern {
+					lngIdx = i
+					break
+				}
+			}
+		}
+	}
+
+	// Second pass: If exact match not found, look for substring matches
+	if latIdx == -1 {
+		for i, h := range headers {
+			h = strings.ToLower(strings.TrimSpace(h))
+			for _, pattern := range latPatterns {
+				if strings.Contains(h, pattern) {
+					latIdx = i
+					break
+				}
+			}
+			if latIdx != -1 {
+				break
+			}
+		}
+	}
+
+	if lngIdx == -1 {
+		for i, h := range headers {
+			h = strings.ToLower(strings.TrimSpace(h))
+			for _, pattern := range lngPatterns {
+				if strings.Contains(h, pattern) {
+					lngIdx = i
+					break
+				}
+			}
+			if lngIdx != -1 {
+				break
+			}
+		}
+	}
+
+	// If no lat/lng columns found, return empty GeoJSON with properties
+	if latIdx == -1 || lngIdx == -1 {
+		return map[string]interface{}{
+			"type":     "FeatureCollection",
+			"features": []interface{}{},
+			"properties": map[string]interface{}{
+				"error":   "No latitude/longitude columns found in CSV",
+				"message": "CSV files must contain 'lat' and 'lng' (or similar) columns for mapping",
+			},
+		}, nil
+	}
+
+	latField := headers[latIdx]
+	lngField := headers[lngIdx]
+
+	// Create VRT file for GDAL to read the CSV
+	vrtContent := fmt.Sprintf(`<OGRVRTDataSource>
+    <OGRVRTLayer name="%s">
+        <SrcDataSource>%s</SrcDataSource>
+        <GeometryType>wkbPoint</GeometryType>
+        <LayerSRS>WGS84</LayerSRS>
+        <GeometryField encoding="PointFromColumns" x="%s" y="%s"/>
+    </OGRVRTLayer>
+</OGRVRTDataSource>`, filepath.Base(filePath), filePath, lngField, latField)
+
+	// Create temporary VRT file
+	tmpDir := os.TempDir()
+	vrtPath := filepath.Join(tmpDir, fmt.Sprintf("terrabox_%d.vrt", time.Now().UnixNano()))
+	if err := os.WriteFile(vrtPath, []byte(vrtContent), 0644); err != nil {
+		return nil, fmt.Errorf("failed to create VRT file: %v", err)
+	}
+	defer os.Remove(vrtPath) // Clean up VRT file after use
+
+	// Use ogr2ogr to convert the VRT (CSV with geometry) to GeoJSON
+	cmd := exec.Command("ogr2ogr", "-f", "GeoJSON", "/dev/stdout", vrtPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert CSV to GeoJSON using GDAL: %v, output: %s", err, string(output))
+	}
+
+	// Parse the GeoJSON output
+	var geojson map[string]interface{}
+	if err := json.Unmarshal(output, &geojson); err != nil {
+		return nil, fmt.Errorf("failed to parse GeoJSON from GDAL output: %v", err)
+	}
+
+	return geojson, nil
+}
+
 // loadFileWithOgrInfo attempts to load file info using ogrinfo as fallback
 func (a *App) loadFileWithOgrInfo(filePath string) (map[string]interface{}, error) {
 	// Get file extension to determine type
@@ -748,10 +999,10 @@ func (a *App) loadFileWithOgrInfo(filePath string) (map[string]interface{}, erro
 
 	// Create a basic GeoJSON structure for unsupported files
 	result := map[string]interface{}{
-		"type": "FeatureCollection",
+		"type":     "FeatureCollection",
 		"features": []interface{}{},
 		"properties": map[string]interface{}{
-			"error": "Unable to load file with GDAL",
+			"error":     "Unable to load file with GDAL",
 			"file_path": filePath,
 			"file_type": ext,
 		},
@@ -1332,10 +1583,10 @@ Return ONLY the complete Overpass query, no explanations or additional text.`, d
 
 	// Return the direct query in LocationData
 	locationData := &LocationData{
-		Location: "ai_generated",
+		Location:    "ai_generated",
 		DirectQuery: content,
 		BoundingBox: [4]float64{fallbackBbox[0], fallbackBbox[1], fallbackBbox[2], fallbackBbox[3]},
-		Categories: []string{}, // Empty since we're using direct query
+		Categories:  []string{}, // Empty since we're using direct query
 	}
 
 	return locationData, nil
@@ -1357,9 +1608,9 @@ func (a *App) generateFallbackQuery(description string, bbox []float64) (string,
 	// Create a reasonable area around the center (0.02 degrees ~ 2km)
 	span := 0.02
 	south = centerLat - span
-	west = centerLon - span  // west should be smaller (more negative for negative longitudes)
+	west = centerLon - span // west should be smaller (more negative for negative longitudes)
 	north = centerLat + span
-	east = centerLon + span  // east should be larger (less negative for negative longitudes)
+	east = centerLon + span // east should be larger (less negative for negative longitudes)
 
 	// Ensure proper coordinate ordering: west < east, south < north
 	if west > east {
@@ -1541,59 +1792,59 @@ func (a *App) buildOverpassQuery(locationData *LocationData, description string)
 		// Regular category processing for non-island requests
 		for _, category := range locationData.Categories {
 			switch category {
-		case "restaurant", "cafe", "fast_food":
-			queries = append(queries, fmt.Sprintf(`  node["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
-		case "school", "university":
-			queries = append(queries, fmt.Sprintf(`  node["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
-		case "shop":
-			queries = append(queries, fmt.Sprintf(`  node["shop"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["shop"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["shop"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "park", "leisure":
-			queries = append(queries, fmt.Sprintf(`  way["leisure"="park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["leisure"="park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["landuse"="recreation_ground"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["landuse"="recreation_ground"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "highway":
-			queries = append(queries, fmt.Sprintf(`  way["highway"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["highway"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "beach":
-			queries = append(queries, fmt.Sprintf(`  node["natural"="beach"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["natural"="beach"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["natural"="beach"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "beach_sandy":
-			queries = append(queries, fmt.Sprintf(`  node["natural"="beach"]["surface"="sand"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["natural"="beach"]["surface"="sand"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["natural"="beach"]["surface"="sand"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "beach_pebbles":
-			queries = append(queries, fmt.Sprintf(`  node["natural"="beach"]["surface"="pebbles"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["natural"="beach"]["surface"="pebbles"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "boundary", "administrative", "land_outline", "outline", "border":
-			queries = append(queries, fmt.Sprintf(`  relation["boundary"="administrative"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["admin_level"~"^[2-8]$"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "landuse", "land_use":
-			queries = append(queries, fmt.Sprintf(`  way["landuse"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["landuse"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "coastline", "coast", "water", "shoreline":
-			queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["natural"="water"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["natural"="water"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "protected_area", "national_park", "nature_reserve":
-			queries = append(queries, fmt.Sprintf(`  relation["boundary"="protected_area"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["boundary"="national_park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["boundary"="protected_area"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "postal_code", "zip_code":
-			queries = append(queries, fmt.Sprintf(`  relation["boundary"="postal_code"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["postal_code"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		case "island", "islands", "archipelago", "isle":
-			queries = append(queries, fmt.Sprintf(`  relation["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  relation["place"="archipelago"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-			queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
-		}
+			case "restaurant", "cafe", "fast_food":
+				queries = append(queries, fmt.Sprintf(`  node["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
+			case "school", "university":
+				queries = append(queries, fmt.Sprintf(`  node["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["amenity"="%s"](%.6f,%.6f,%.6f,%.6f);`, category, south, west, north, east))
+			case "shop":
+				queries = append(queries, fmt.Sprintf(`  node["shop"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["shop"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["shop"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "park", "leisure":
+				queries = append(queries, fmt.Sprintf(`  way["leisure"="park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["leisure"="park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["landuse"="recreation_ground"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["landuse"="recreation_ground"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "highway":
+				queries = append(queries, fmt.Sprintf(`  way["highway"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["highway"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "beach":
+				queries = append(queries, fmt.Sprintf(`  node["natural"="beach"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["natural"="beach"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["natural"="beach"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "beach_sandy":
+				queries = append(queries, fmt.Sprintf(`  node["natural"="beach"]["surface"="sand"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["natural"="beach"]["surface"="sand"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["natural"="beach"]["surface"="sand"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "beach_pebbles":
+				queries = append(queries, fmt.Sprintf(`  node["natural"="beach"]["surface"="pebbles"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["natural"="beach"]["surface"="pebbles"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "boundary", "administrative", "land_outline", "outline", "border":
+				queries = append(queries, fmt.Sprintf(`  relation["boundary"="administrative"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["admin_level"~"^[2-8]$"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "landuse", "land_use":
+				queries = append(queries, fmt.Sprintf(`  way["landuse"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["landuse"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "coastline", "coast", "water", "shoreline":
+				queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["natural"="water"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["natural"="water"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "protected_area", "national_park", "nature_reserve":
+				queries = append(queries, fmt.Sprintf(`  relation["boundary"="protected_area"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["boundary"="national_park"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["boundary"="protected_area"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "postal_code", "zip_code":
+				queries = append(queries, fmt.Sprintf(`  relation["boundary"="postal_code"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["postal_code"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			case "island", "islands", "archipelago", "isle":
+				queries = append(queries, fmt.Sprintf(`  relation["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  relation["place"="archipelago"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["place"="island"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+				queries = append(queries, fmt.Sprintf(`  way["natural"="coastline"](%.6f,%.6f,%.6f,%.6f);`, south, west, north, east))
+			}
 		}
 	}
 
@@ -1618,3 +1869,321 @@ out geom;`, strings.Join(queries, "\n"))
 	return query
 }
 
+// DuckDB-related functions
+
+// DuckDBTableInfo represents information about a DuckDB table
+type DuckDBTableInfo struct {
+	TableName string `json:"table_name"`
+	FileName  string `json:"file_name"`
+	FilePath  string `json:"file_path"`
+	FileType  string `json:"file_type"`
+	LoadedAt  string `json:"loaded_at"`
+	RowCount  int    `json:"row_count"`
+	GeomType  string `json:"geom_type"`
+	SRID      int    `json:"srid"`
+}
+
+// LoadGeoJSONToDuckDB loads a GeoJSON file/data into DuckDB as a spatial table
+func (a *App) LoadGeoJSONToDuckDB(geojsonData map[string]interface{}, fileName string, filePath string) (string, error) {
+	if a.duckDB == nil {
+		return "", fmt.Errorf("DuckDB not initialized")
+	}
+
+	a.duckMu.Lock()
+	defer a.duckMu.Unlock()
+
+	// Generate unique table name based on filename and timestamp
+	timestamp := time.Now().Unix()
+	tableName := fmt.Sprintf("geo_%d", timestamp)
+
+	// Convert GeoJSON to string for DuckDB
+	geojsonBytes, err := json.Marshal(geojsonData)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal GeoJSON: %v", err)
+	}
+
+	// Create table from GeoJSON using DuckDB's spatial functions
+	createTableQuery := fmt.Sprintf(`
+		CREATE TABLE %s AS
+		SELECT * FROM ST_Read('%s');
+	`, tableName, string(geojsonBytes))
+
+	// Try alternative approach: load from JSON and convert geometry
+	// This is more compatible with DuckDB's JSON parser
+	createTableQuery = fmt.Sprintf(`
+		CREATE TABLE %s AS
+		SELECT
+			json_extract(feature, '$.properties') as properties,
+			ST_GeomFromGeoJSON(json_extract(feature, '$.geometry')::VARCHAR) as geometry
+		FROM (
+			SELECT unnest(json_extract($1, '$.features')) as feature
+		);
+	`, tableName)
+
+	_, err = a.duckDB.Exec(createTableQuery, string(geojsonBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create DuckDB table: %v", err)
+	}
+
+	// Get row count
+	var rowCount int
+	err = a.duckDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
+	if err != nil {
+		rowCount = 0
+	}
+
+	// Insert metadata
+	insertMetadata := `
+		INSERT INTO duckdb_geo_tables (table_name, file_path, file_name, file_type, row_count, geom_type, srid)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = a.duckDB.Exec(insertMetadata, tableName, filePath, fileName, "geojson", rowCount, "Unknown", 4326)
+	if err != nil {
+		fmt.Printf("Warning: Could not insert metadata: %v\n", err)
+	}
+
+	return tableName, nil
+}
+
+// ExecuteDuckDBQuery executes a SQL query on DuckDB and returns results
+func (a *App) ExecuteDuckDBQuery(query string) (map[string]interface{}, error) {
+	if a.duckDB == nil {
+		return nil, fmt.Errorf("DuckDB not initialized")
+	}
+
+	a.duckMu.RLock()
+	defer a.duckMu.RUnlock()
+
+	rows, err := a.duckDB.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("query execution failed: %v", err)
+	}
+	defer rows.Close()
+
+	// Get column names
+	columns, err := rows.Columns()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get columns: %v", err)
+	}
+
+	// Prepare result structure
+	var results []map[string]interface{}
+
+	for rows.Next() {
+		// Create a slice of interface{} to hold each column's value
+		values := make([]interface{}, len(columns))
+		valuePtrs := make([]interface{}, len(columns))
+		for i := range columns {
+			valuePtrs[i] = &values[i]
+		}
+
+		if err := rows.Scan(valuePtrs...); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %v", err)
+		}
+
+		// Create row map
+		row := make(map[string]interface{})
+		for i, col := range columns {
+			val := values[i]
+			// Convert []byte to string for better JSON serialization
+			if b, ok := val.([]byte); ok {
+				row[col] = string(b)
+			} else {
+				row[col] = val
+			}
+		}
+		results = append(results, row)
+	}
+
+	return map[string]interface{}{
+		"columns": columns,
+		"rows":    results,
+		"count":   len(results),
+	}, nil
+}
+
+// ListDuckDBTables returns a list of all tables in DuckDB
+func (a *App) ListDuckDBTables() ([]DuckDBTableInfo, error) {
+	if a.duckDB == nil {
+		return nil, fmt.Errorf("DuckDB not initialized")
+	}
+
+	a.duckMu.RLock()
+	defer a.duckMu.RUnlock()
+
+	query := `
+		SELECT table_name, file_path, file_name, file_type, loaded_at, row_count, geom_type, srid
+		FROM duckdb_geo_tables
+		ORDER BY loaded_at DESC
+	`
+
+	rows, err := a.duckDB.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list tables: %v", err)
+	}
+	defer rows.Close()
+
+	var tables []DuckDBTableInfo
+	for rows.Next() {
+		var table DuckDBTableInfo
+		err := rows.Scan(
+			&table.TableName, &table.FilePath, &table.FileName, &table.FileType,
+			&table.LoadedAt, &table.RowCount, &table.GeomType, &table.SRID,
+		)
+		if err != nil {
+			continue
+		}
+		tables = append(tables, table)
+	}
+
+	return tables, nil
+}
+
+// ConvertDuckDBResultToGeoJSON converts DuckDB query results to GeoJSON
+func (a *App) ConvertDuckDBResultToGeoJSON(tableName string) (map[string]interface{}, error) {
+	if a.duckDB == nil {
+		return nil, fmt.Errorf("DuckDB not initialized")
+	}
+
+	a.duckMu.RLock()
+	defer a.duckMu.RUnlock()
+
+	// Query to convert geometry to GeoJSON
+	query := fmt.Sprintf(`
+		SELECT
+			json_object('type', 'Feature',
+				'geometry', ST_AsGeoJSON(geometry)::JSON,
+				'properties', properties
+			) as feature
+		FROM %s
+	`, tableName)
+
+	rows, err := a.duckDB.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert to GeoJSON: %v", err)
+	}
+	defer rows.Close()
+
+	features := []interface{}{}
+	for rows.Next() {
+		var featureJSON string
+		if err := rows.Scan(&featureJSON); err != nil {
+			continue
+		}
+
+		var feature map[string]interface{}
+		if err := json.Unmarshal([]byte(featureJSON), &feature); err != nil {
+			continue
+		}
+		features = append(features, feature)
+	}
+
+	return map[string]interface{}{
+		"type":     "FeatureCollection",
+		"features": features,
+	}, nil
+}
+
+// DropDuckDBTable drops a table from DuckDB
+func (a *App) DropDuckDBTable(tableName string) error {
+	if a.duckDB == nil {
+		return fmt.Errorf("DuckDB not initialized")
+	}
+
+	a.duckMu.Lock()
+	defer a.duckMu.Unlock()
+
+	// Drop the table
+	_, err := a.duckDB.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tableName))
+	if err != nil {
+		return fmt.Errorf("failed to drop table: %v", err)
+	}
+
+	// Remove from metadata
+	_, err = a.duckDB.Exec("DELETE FROM duckdb_geo_tables WHERE table_name = ?", tableName)
+	if err != nil {
+		fmt.Printf("Warning: Could not remove metadata: %v\n", err)
+	}
+
+	return nil
+}
+
+// LoadDataFileToDuckDB loads a data file (CSV, GeoJSON, Shapefile, KML, etc.) into DuckDB
+// This is a UNIFIED function that uses GDAL to convert any format to GeoJSON, then loads to DuckDB
+func (a *App) LoadDataFileToDuckDB(filePath string) (string, error) {
+	// Check if file exists
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("file does not exist: %s", filePath)
+	}
+
+	fileName := filepath.Base(filePath)
+
+	// Use the unified GDAL loader to convert ANY format to GeoJSON
+	geojsonData, err := a.LoadGeospatialFile(filePath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load geospatial file: %v", err)
+	}
+
+	// Check if the result has features (geometry)
+	features, hasFeatures := geojsonData["features"].([]interface{})
+	hasGeometry := hasFeatures && len(features) > 0
+
+	// For files with geometry, use the unified GeoJSON loader
+	if hasGeometry {
+		return a.LoadGeoJSONToDuckDB(geojsonData, fileName, filePath)
+	}
+
+	// For CSV files without geometry (tabular data only), use direct CSV loader
+	ext := strings.ToLower(filepath.Ext(filePath))
+	if ext == ".csv" {
+		return a.loadCSVToDuckDB(filePath, fileName)
+	}
+
+	// Otherwise, still try to load as GeoJSON even if empty
+	return a.LoadGeoJSONToDuckDB(geojsonData, fileName, filePath)
+}
+
+// loadCSVToDuckDB loads a CSV file into DuckDB as a table (internal function)
+func (a *App) loadCSVToDuckDB(filePath string, fileName string) (string, error) {
+	if a.duckDB == nil {
+		return "", fmt.Errorf("DuckDB not initialized")
+	}
+
+	a.duckMu.Lock()
+	defer a.duckMu.Unlock()
+
+	// Generate unique table name based on filename and timestamp
+	timestamp := time.Now().Unix()
+	tableName := fmt.Sprintf("csv_%d", timestamp)
+
+	// Use DuckDB's read_csv function to create table
+	// DuckDB auto-detects headers, delimiters, and data types
+	createTableQuery := fmt.Sprintf(`
+		CREATE TABLE %s AS
+		SELECT * FROM read_csv_auto('%s');
+	`, tableName, filePath)
+
+	_, err := a.duckDB.Exec(createTableQuery)
+	if err != nil {
+		return "", fmt.Errorf("failed to create table from CSV: %v", err)
+	}
+
+	// Get row count
+	var rowCount int
+	err = a.duckDB.QueryRow(fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)).Scan(&rowCount)
+	if err != nil {
+		rowCount = 0
+	}
+
+	// Insert metadata
+	insertMetadata := `
+		INSERT INTO duckdb_geo_tables (table_name, file_path, file_name, file_type, row_count, geom_type, srid)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+	_, err = a.duckDB.Exec(insertMetadata, tableName, filePath, fileName, "csv", rowCount, "None", 0)
+	if err != nil {
+		fmt.Printf("Warning: Could not insert metadata: %v\n", err)
+	}
+
+	return tableName, nil
+}

@@ -114,13 +114,15 @@ const MapControls: React.FC<MapControlsProps> = ({ mapStyle, setMapStyle }) => {
           vertical: "top",
           horizontal: "left",
         }}
-        PaperProps={{
-          sx: {
-            background: "rgba(255, 255, 255, 0.95)",
-            backdropFilter: "blur(10px)",
-            border: "1px solid rgba(255, 255, 255, 0.2)",
-            boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
-            mt: 1,
+        slotProps={{
+          paper: {
+            sx: {
+              backgroundOpacity: 0.7,
+              backdropFilter: "blur(10px)",
+              border: "1px solid rgba(255, 255, 255, 0.2)",
+              boxShadow: "0 4px 12px rgba(0, 0, 0, 0.1)",
+              mt: 1,
+            },
           },
         }}
       >

@@ -1,5 +1,31 @@
 export namespace main {
 	
+	export class DuckDBTableInfo {
+	    table_name: string;
+	    file_name: string;
+	    file_path: string;
+	    file_type: string;
+	    loaded_at: string;
+	    row_count: number;
+	    geom_type: string;
+	    srid: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DuckDBTableInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.table_name = source["table_name"];
+	        this.file_name = source["file_name"];
+	        this.file_path = source["file_path"];
+	        this.file_type = source["file_type"];
+	        this.loaded_at = source["loaded_at"];
+	        this.row_count = source["row_count"];
+	        this.geom_type = source["geom_type"];
+	        this.srid = source["srid"];
+	    }
+	}
 	export class GeoFileIndex {
 	    id: number;
 	    file_name: string;

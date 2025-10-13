@@ -64,8 +64,62 @@ export function useFileDropHandler({
     file: File,
     ext: string
   ): Promise<FeatureCollection | null> => {
-    const arrayBuffer = await file.arrayBuffer();
+    // USE UNIFIED BACKEND GDAL LOADER
+    // Save the dropped file to a temp location and use the backend's unified loader
+    try {
+      const { WriteFile, LoadGeospatialFile } = await import(
+        "../../wailsjs/go/main/App"
+      );
 
+      // Read file as base64 for binary-safe transfer
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      const binaryString = Array.from(bytes, (byte) =>
+        String.fromCharCode(byte)
+      ).join("");
+      const base64Data = btoa(binaryString);
+
+      // Create a temporary file path
+      const tempPath = `/tmp/terrabox_drop_${Date.now()}_${file.name}`;
+
+      // Write the file to temp location
+      // Note: WriteFile expects the data as a string, so we'll write base64
+      // and decode it on the backend if needed, or we can write the raw content
+      // For now, let's write the raw file content
+      const fileContent = new TextDecoder().decode(arrayBuffer);
+
+      // For binary files (shp, kmz), we need special handling
+      if (ext === "shp" || ext === "kmz") {
+        // For binary files, we'll keep using the temp path approach
+        // but we need to ensure binary data is preserved
+        // Since WriteFile might not handle binary well, let's fall back
+        // to client-side processing for now for these formats
+        console.log(
+          `Using client-side fallback for binary format: ${ext}`
+        );
+        return await processGeospatialFileClientSide(file, ext, arrayBuffer);
+      }
+
+      // For text-based formats (geojson, csv, kml), write as text
+      await WriteFile(tempPath, fileContent);
+
+      // Use the unified backend loader
+      const geojsonData = await LoadGeospatialFile(tempPath);
+
+      return geojsonData as FeatureCollection;
+    } catch (error) {
+      console.error("Error using backend loader, falling back:", error);
+      // Fallback to client-side processing if backend fails
+      return await processGeospatialFileClientSide(file, ext, await file.arrayBuffer());
+    }
+  };
+
+  // Client-side fallback for binary formats (Shapefile, KMZ)
+  const processGeospatialFileClientSide = async (
+    file: File,
+    ext: string,
+    arrayBuffer: ArrayBuffer
+  ): Promise<FeatureCollection | null> => {
     if (ext === "shp") {
       const { load } = await import("@loaders.gl/core");
       const { ShapefileLoader } = await import("@loaders.gl/shapefile");
@@ -91,20 +145,22 @@ export function useFileDropHandler({
       }
     }
 
+    // For other formats, try text-based parsing
+    const text = new TextDecoder().decode(arrayBuffer);
+
     if (ext === "kml") {
       const { KMLLoader } = await import("@loaders.gl/kml");
       const { load } = await import("@loaders.gl/core");
-      const text = new TextDecoder().decode(arrayBuffer);
       return (await load(text, KMLLoader)) as FeatureCollection;
     }
 
     if (ext === "geojson" || ext === "json") {
-      const text = new TextDecoder().decode(arrayBuffer);
       return JSON.parse(text);
     }
 
     if (ext === "csv") {
-      const text = new TextDecoder().decode(arrayBuffer);
+      // CSV parsing is now handled by the backend via GDAL
+      // This shouldn't be reached, but keep as ultimate fallback
       const lines = text.trim().split("\n");
       if (lines.length < 2) {
         throw new Error(

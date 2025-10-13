@@ -565,26 +565,24 @@ const FilePanel: React.FC<FilePanelProps> = ({
     try {
       const ext = filePath.toLowerCase().split(".").pop();
 
+      // For filesystem files (indexed files), use the UNIFIED BACKEND LOADER
+      if (!filePath.startsWith("blob:")) {
+        const { LoadGeospatialFile } = await import("../../wailsjs/go/main/App");
+        const geojsonData = await LoadGeospatialFile(filePath);
+
+        // The backend already handles CSV lat/lng detection and GDAL conversion
+        // CRS transformation is also handled by GDAL on the backend
+        return geojsonData as FeatureCollection;
+      }
+
+      // FALLBACK: For blob URLs (from drag & drop), use client-side loaders.gl
+      // This is a temporary solution until we implement server-side temp file handling
+      console.log("Using client-side loaders.gl fallback for blob URL:", filePath);
+
       // For binary files (shapefiles, KMZ), we need to read as ArrayBuffer
       if (ext === "shp" || ext === "kmz") {
-        let arrayBuffer: ArrayBuffer;
-
-        if (filePath.startsWith("blob:")) {
-          const response = await fetch(filePath);
-          arrayBuffer = await response.arrayBuffer();
-        } else {
-          // For filesystem files, read as base64 and convert to ArrayBuffer
-          const { ReadFileAsBase64 } = await import(
-            "../../wailsjs/go/main/App"
-          );
-          const base64Content = await ReadFileAsBase64(filePath);
-          const binaryString = atob(base64Content);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          arrayBuffer = bytes.buffer;
-        }
+        const response = await fetch(filePath);
+        const arrayBuffer = await response.arrayBuffer();
 
         if (ext === "shp") {
           return await parseShapefileContent(arrayBuffer, crs);
@@ -593,23 +591,11 @@ const FilePanel: React.FC<FilePanelProps> = ({
         if (ext === "kmz") {
           return await parseKMZContent(arrayBuffer);
         }
-
-        // if (ext === 'gpkg') {
-        //   return await parseGeoPackageContent(arrayBuffer, crs);
-        // }
       }
 
       // For text-based files
-      let fileContent: string;
-
-      if (filePath.startsWith("blob:")) {
-        const response = await fetch(filePath);
-        fileContent = await response.text();
-      } else {
-        // Regular file from filesystem
-        const { ReadFile } = await import("../../wailsjs/go/main/App");
-        fileContent = await ReadFile(filePath);
-      }
+      const response = await fetch(filePath);
+      const fileContent = await response.text();
 
       if (ext === "geojson" || ext === "json") {
         const geojson = JSON.parse(fileContent);

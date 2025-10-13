@@ -503,13 +503,11 @@ const LayerManager: React.FC<LayerManagerProps> = ({
           alignItems: "center",
           justifyContent: "space-between",
           p: 2,
-          pb: 0,
-          background: "rgba(255, 255, 255, 0.05)",
+          pb: 2,
         }}
       >
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          <Layers sx={{ color: "#10b981" }} />
-          <Typography variant="h6" sx={{ fontWeight: 600 }}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
             Layer Manager
           </Typography>
           <Chip

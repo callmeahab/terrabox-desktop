@@ -17,7 +17,7 @@ import {
   Tooltip,
   Fab,
 } from "@mui/material";
-import { Layers, Close, CloudUpload } from "@mui/icons-material";
+import { Layers, Close, CloudUpload, Storage } from "@mui/icons-material";
 import { GeoJsonLayer } from "@deck.gl/layers";
 import {
   EditableGeoJsonLayer,
@@ -33,7 +33,7 @@ import FilePanel from "./components/FilePanel";
 import EditControls from "./components/EditControls";
 import BasicEditingTools from "./components/BasicEditingTools";
 import GeometryTools from "./components/GeometryTools";
-import OverpassPanel from "./components/OverpassPanel";
+import QueryPanel from "./components/QueryPanel";
 import FeatureDetailsPanel from "./components/FeatureDetailsDialog";
 import MapRenderer from "./components/MapRenderer";
 import StyleControls, {
@@ -176,7 +176,7 @@ function App() {
   } | null>(null);
   const [featureDetailsPanelOpen, setFeatureDetailsPanelOpen] =
     React.useState<boolean>(false);
-  const [isOverpassPanelOpen, setIsOverpassPanelOpen] =
+  const [isQueryPanelOpen, setIsQueryPanelOpen] =
     React.useState<boolean>(false);
   const [styleControlsOpen, setStyleControlsOpen] =
     React.useState<boolean>(false);
@@ -520,7 +520,7 @@ function App() {
             flex: 1,
             position: "relative",
             marginLeft: isPanelOpen ? `${panelWidth}px` : "40px",
-            marginBottom: isOverpassPanelOpen ? "400px" : "35px",
+            marginBottom: isQueryPanelOpen ? "400px" : "35px",
             transition: "margin-left 0.3s ease, margin-bottom 0.3s ease",
           }}
         >
@@ -792,10 +792,10 @@ function App() {
             onCalculateBounds={calculateBoundsFromGeojson}
           />
 
-          {/* Overpass Panel */}
-          <OverpassPanel
-            isOpen={isOverpassPanelOpen}
-            onToggle={setIsOverpassPanelOpen}
+          {/* Query Panel (combines Overpass and DuckDB) */}
+          <QueryPanel
+            isOpen={isQueryPanelOpen}
+            onToggle={setIsQueryPanelOpen}
             drawnBounds={drawnBounds}
             isDrawingBounds={isDrawingBounds}
             onStartDrawingBounds={handleStartDrawingBounds}
